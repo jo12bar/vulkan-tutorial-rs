@@ -1,0 +1,24 @@
+[package]
+name = "vk-tut"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ash = "0.37.0"
+ash-window = "0.11.0"
+color-eyre = "0.6.2"
+lazy_static = "1.4.0"
+nalgebra-glm = "0.17.0"
+png = "0.17.5"
+thiserror = "1.0.32"
+tobj = "3.2.3"
+tracing = "0.1.36"
+tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
+tracing-tree = "0.2.1"
+winit = "0.27.1"
+
+# Speeds up color_eyre in debug builds by a whole lot
+[profile.dev.package.backtrace]
+opt-level = 3
