@@ -178,6 +178,9 @@ impl<const N: usize> From<StringArray<N>> for [c_char; N] {
 /// A Vulkan extension name.
 pub type VkExtensionName = StringArray<{ ash::vk::MAX_EXTENSION_NAME_SIZE }>;
 
+/// A physical device name.
+pub type PhysicalDeviceName = StringArray<{ ash::vk::MAX_PHYSICAL_DEVICE_NAME_SIZE }>;
+
 #[cfg(test)]
 mod test {
     use super::*;
