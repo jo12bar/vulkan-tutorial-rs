@@ -1,4 +1,7 @@
-use ash::{extensions::ext as vk_ext, vk, Device, Entry, Instance};
+use ash::{
+    extensions::{ext as vk_ext, khr as vk_khr},
+    vk, Device, Entry, Instance,
+};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
@@ -92,9 +95,12 @@ impl App {
             .wrap_err("Error loading Vulkan library")?;
         let instance = create_instance(window, &entry, &mut data)?;
 
+        debug!("Creating render surface on main window");
+        data.surface = ash_window::create_surface(&entry, &instance, window, None)?;
+
         debug!("Selecting render device");
-        pick_physical_device(&instance, &mut data)?;
-        let device = create_logical_device(&instance, &mut data)?;
+        pick_physical_device(&entry, &instance, &mut data)?;
+        let device = create_logical_device(&entry, &instance, &mut data)?;
 
         Ok(Self {
             entry,
@@ -115,6 +121,8 @@ impl App {
     unsafe fn destroy(&mut self) {
         self.device.destroy_device(None);
 
+        vk_khr::Surface::new(&self.entry, &self.instance).destroy_surface(self.data.surface, None);
+
         if should_enable_validation_layers() {
             vk_ext::DebugUtils::new(&self.entry, &self.instance)
                 .destroy_debug_utils_messenger(self.data.messenger, None);
@@ -127,8 +135,13 @@ impl App {
 /// Vulkan handles and associates properties used by our Vulkan [`App`].
 #[derive(Clone, Debug, Default)]
 struct AppData {
+    surface: vk::SurfaceKHR,
+
     physical_device: vk::PhysicalDevice,
+
     graphics_queue: vk::Queue,
+    present_queue: vk::Queue,
+
     /// For handling debug messages sent from Vulkan's validation layers.
     messenger: vk::DebugUtilsMessengerEXT,
 }
@@ -218,18 +231,24 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
 pub enum PhysicalDeviceSuitabilityError {
     #[error("Physical device is unsuitable: {0}")]
     Unsuitable(&'static str),
+    #[error("Error while querying physical device suitability: {0}")]
+    VkError(#[from] vk::Result),
 }
 
 /// Picks a physical device to use for rendering.
 #[tracing::instrument(level = "DEBUG", skip_all)]
-unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
+unsafe fn pick_physical_device(
+    entry: &Entry,
+    instance: &Instance,
+    data: &mut AppData,
+) -> Result<()> {
     let mut valid_devices = Vec::new();
 
     for physical_device in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(physical_device);
         let device_name = PhysicalDeviceName::from(properties.device_name);
 
-        match check_physical_device(instance, data, physical_device) {
+        match check_physical_device(entry, instance, data, physical_device) {
             Ok(score) => valid_devices.push((physical_device, score, device_name, properties)),
             Err(err) => {
                 debug!(device_name = %device_name, reason = %err, "Skipping physical device")
@@ -260,6 +279,7 @@ unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Resul
 /// Check if a physical device satisfies all the requirements of this application.
 /// Returns a score based on its properties and available features.
 unsafe fn check_physical_device(
+    entry: &Entry,
     instance: &Instance,
     data: &AppData,
     physical_device: vk::PhysicalDevice,
@@ -287,21 +307,35 @@ unsafe fn check_physical_device(
     // if the following function call doesn't panic, then the device supports
     // all the queue families needed for this app. we just discard the queue
     // family indices immediately though.
-    QueueFamilyIndices::get(instance, data, physical_device)?;
+    QueueFamilyIndices::get(entry, instance, data, physical_device)?;
 
     Ok(score)
 }
 
 /// Create a logical device for rendering from a physical device.
 #[tracing::instrument(level = "DEBUG", skip_all)]
-unsafe fn create_logical_device(instance: &Instance, data: &mut AppData) -> Result<Device> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+unsafe fn create_logical_device(
+    entry: &Entry,
+    instance: &Instance,
+    data: &mut AppData,
+) -> Result<Device> {
+    let indices = QueueFamilyIndices::get(entry, instance, data, data.physical_device)?;
+
+    let mut unique_indices = HashSet::new();
+    unique_indices.insert(indices.graphics);
+    unique_indices.insert(indices.present);
 
     // Setup command queues
     let queue_priorities = &[1.0];
-    let queue_info = vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(indices.graphics)
-        .queue_priorities(queue_priorities);
+    let queue_infos = unique_indices
+        .iter()
+        .map(|i| {
+            vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(*i)
+                .queue_priorities(queue_priorities)
+                .build()
+        })
+        .collect::<Vec<_>>();
 
     // Setup validation layers (if needed)
     let layers = if should_enable_validation_layers() {
@@ -315,12 +349,13 @@ unsafe fn create_logical_device(instance: &Instance, data: &mut AppData) -> Resu
 
     // Fill in the device info and create the device
     let info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(std::slice::from_ref(&queue_info))
+        .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)
         .enabled_features(&features);
 
     let device = instance.create_device(data.physical_device, &info, None)?;
     data.graphics_queue = device.get_device_queue(indices.graphics, 0);
+    data.present_queue = device.get_device_queue(indices.present, 0);
 
     Ok(device)
 }
@@ -329,23 +364,42 @@ unsafe fn create_logical_device(instance: &Instance, data: &mut AppData) -> Resu
 #[derive(Copy, Clone, Debug)]
 struct QueueFamilyIndices {
     graphics: u32,
+    present: u32,
 }
 
 impl QueueFamilyIndices {
     unsafe fn get(
+        entry: &Entry,
         instance: &Instance,
         data: &AppData,
         physical_device: vk::PhysicalDevice,
     ) -> Result<Self, PhysicalDeviceSuitabilityError> {
         let properties = instance.get_physical_device_queue_family_properties(physical_device);
 
-        let graphics = properties
-            .iter()
-            .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .map(|i| i as u32);
+        let surface_ext = vk_khr::Surface::new(entry, instance);
 
-        if let Some(graphics) = graphics {
-            Ok(Self { graphics })
+        let mut graphics = None;
+        let mut present = None;
+        for (i, properties) in properties.iter().enumerate() {
+            if properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                // Supports rendering graphics to an image
+                graphics = Some(i as u32);
+            } else if surface_ext.get_physical_device_surface_support(
+                physical_device,
+                i as u32,
+                data.surface,
+            )? {
+                // Supports rendering to a surface attached to some window
+                present = Some(i as u32);
+            }
+
+            if graphics.is_some() && present.is_some() {
+                break;
+            }
+        }
+
+        if let (Some(graphics), Some(present)) = (graphics, present) {
+            Ok(Self { graphics, present })
         } else {
             Err(PhysicalDeviceSuitabilityError::Unsuitable(
                 "Missing required queue families",
