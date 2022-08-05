@@ -1,4 +1,4 @@
-use ash::{extensions::ext as vk_ext, vk, Entry, Instance};
+use ash::{extensions::ext as vk_ext, vk, Device, Entry, Instance};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
@@ -76,6 +76,7 @@ struct App {
     entry: Entry,
     instance: Instance,
     data: AppData,
+    device: Device,
 }
 
 impl App {
@@ -93,11 +94,13 @@ impl App {
 
         debug!("Selecting render device");
         pick_physical_device(&instance, &mut data)?;
+        let device = create_logical_device(&instance, &mut data)?;
 
         Ok(Self {
             entry,
             instance,
             data,
+            device,
         })
     }
 
@@ -110,6 +113,8 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        self.device.destroy_device(None);
+
         if should_enable_validation_layers() {
             vk_ext::DebugUtils::new(&self.entry, &self.instance)
                 .destroy_debug_utils_messenger(self.data.messenger, None);
@@ -123,6 +128,7 @@ impl App {
 #[derive(Clone, Debug, Default)]
 struct AppData {
     physical_device: vk::PhysicalDevice,
+    graphics_queue: vk::Queue,
     /// For handling debug messages sent from Vulkan's validation layers.
     messenger: vk::DebugUtilsMessengerEXT,
 }
@@ -284,6 +290,39 @@ unsafe fn check_physical_device(
     QueueFamilyIndices::get(instance, data, physical_device)?;
 
     Ok(score)
+}
+
+/// Create a logical device for rendering from a physical device.
+#[tracing::instrument(level = "DEBUG", skip_all)]
+unsafe fn create_logical_device(instance: &Instance, data: &mut AppData) -> Result<Device> {
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+
+    // Setup command queues
+    let queue_priorities = &[1.0];
+    let queue_info = vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(indices.graphics)
+        .queue_priorities(queue_priorities);
+
+    // Setup validation layers (if needed)
+    let layers = if should_enable_validation_layers() {
+        vec![VALIDATION_LAYER.as_ptr()]
+    } else {
+        Vec::new()
+    };
+
+    // Set up device-specific features
+    let features = vk::PhysicalDeviceFeatures::builder();
+
+    // Fill in the device info and create the device
+    let info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(std::slice::from_ref(&queue_info))
+        .enabled_layer_names(&layers)
+        .enabled_features(&features);
+
+    let device = instance.create_device(data.physical_device, &info, None)?;
+    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
+
+    Ok(device)
 }
 
 /// Stores the indices of queue families to be used by this application.
