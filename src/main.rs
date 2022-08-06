@@ -384,7 +384,9 @@ impl QueueFamilyIndices {
             if properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                 // Supports rendering graphics to an image
                 graphics = Some(i as u32);
-            } else if surface_ext.get_physical_device_surface_support(
+            }
+
+            if surface_ext.get_physical_device_surface_support(
                 physical_device,
                 i as u32,
                 data.surface,
