@@ -108,6 +108,7 @@ impl App {
         create_swapchain_image_views(&device, &mut data)?;
 
         debug!("Creating render pipeline");
+        create_render_pass(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
         Ok(Self {
@@ -127,6 +128,7 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        self.device.destroy_render_pass(self.data.render_pass, None);
         self.device
             .destroy_pipeline_layout(self.data.pipeline_layout, None);
 
@@ -167,6 +169,7 @@ struct AppData {
     swapchain_format: vk::Format,
     swapchain_extent: vk::Extent2D,
 
+    render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
 
     /// For handling debug messages sent from Vulkan's validation layers.
@@ -716,6 +719,52 @@ impl SwapchainSupport {
             }
         }
     }
+}
+
+/// Create a render pass.
+#[tracing::instrument(level = "DEBUG", skip_all)]
+unsafe fn create_render_pass(device: &Device, data: &mut AppData) -> Result<()> {
+    // Use a single color buffer attachment represented by one of the images
+    // from the swapchain.
+    let color_attachment = vk::AttachmentDescription::builder()
+        // Color attachment format MUST match swapchain image format!!
+        .format(data.swapchain_format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        // Clear out old values in the frame buffer when starting to render,
+        // and make sure the new values are preserved once the render is done
+        // (so you can see it on screen)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        // We aren't doing anything with the stencil buffer yet, so results
+        // of loading and storing are irrelevant
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        // Since we're clearing the image, we don't care what its previous layout was.
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        // We want the image to be ready for presentation via the swapchain
+        // once we're done rendering.
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+
+    // To fragment shaders, this will be the 0th output destination.
+    let color_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+    // We aren't doing any fancy post-processing, so a single subpass is all we need.
+    let subpass = vk::SubpassDescription::builder()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(std::slice::from_ref(&color_attachment_ref));
+
+    // Finalize the render pass.
+    let attachments = &[*color_attachment];
+    let subpasses = &[*subpass];
+    let info = vk::RenderPassCreateInfo::builder()
+        .attachments(attachments)
+        .subpasses(subpasses);
+
+    data.render_pass = device.create_render_pass(&info, None)?;
+
+    Ok(())
 }
 
 /// Create a render pipeline.
