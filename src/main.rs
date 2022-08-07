@@ -107,6 +107,9 @@ impl App {
         create_swapchain(window, &entry, &instance, &device, &mut data)?;
         create_swapchain_image_views(&device, &mut data)?;
 
+        debug!("Creating render pipeline");
+        create_pipeline(&device, &mut data)?;
+
         Ok(Self {
             entry,
             instance,
@@ -708,6 +711,12 @@ impl SwapchainSupport {
             }
         }
     }
+}
+
+/// Create a render pipeline.
+#[tracing::instrument(level = "DEBUG", skip_all)]
+unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
+    Ok(())
 }
 
 /// Returns true if Vulkan validation layers should be enabled.
