@@ -47,6 +47,7 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::Exit;
 
                 unsafe {
+                    app.wait_for_device_idle().unwrap();
                     app.destroy();
                 }
 
@@ -74,6 +75,11 @@ fn build_window() -> Result<(EventLoop<()>, Window)> {
     Ok((event_loop, window))
 }
 
+/// The maximum number of frames that the app is allowed to submit to the GPU
+/// for rendering before we have to wait for the GPU to finish rendering a
+/// frame.
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
 /// Our Vulkan app.
 #[derive(Clone)]
 struct App {
@@ -81,6 +87,15 @@ struct App {
     instance: Instance,
     data: AppData,
     device: Device,
+    extensions: Extensions,
+
+    /// The frame we're currently rendering
+    frame: usize,
+}
+
+#[derive(Clone)]
+struct Extensions {
+    swapchain: vk_khr::Swapchain,
 }
 
 impl App {
@@ -118,23 +133,100 @@ impl App {
         create_command_pool(&entry, &instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
+        create_sync_objects(&device, &mut data)?;
+
+        // Cache links to extensions
+        let extensions = Extensions {
+            swapchain: vk_khr::Swapchain::new(&instance, &device),
+        };
+
         Ok(Self {
             entry,
             instance,
             data,
             device,
+            extensions,
+            frame: 0,
         })
     }
 
     /// Render a frame to the Vulkan app.
     //#[tracing::instrument(level = "TRACE", name = "App::render", skip_all)]
-    unsafe fn render(&mut self, window: &Window) -> Result<()> {
+    unsafe fn render(&mut self, _window: &Window) -> Result<()> {
+        // If we already have MAX_FRAMES_IN_FLIGHT frames busy being rendered,
+        // wait for them all to finish rendering before we submit a new frame.
+        self.device
+            .wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
+
+        // Acquire an image from the swapchain.
+        let (image_index, _is_suboptimal) = self.extensions.swapchain.acquire_next_image(
+            self.data.swapchain,
+            u64::MAX,
+            self.data.image_available_semaphores[self.frame],
+            vk::Fence::null(),
+        )?;
+
+        // If this particular image is already in flight, wait for it to finish!
+        if self.data.images_in_flight[image_index as usize] != vk::Fence::null() {
+            self.device.wait_for_fences(
+                &[self.data.images_in_flight[image_index as usize]],
+                true,
+                u64::MAX,
+            )?;
+        }
+
+        self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
+
+        // Submit command buffers to the queue for rendering.
+        let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
+        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = &[self.data.command_buffers[image_index as usize]];
+        let signal_semaphores = &[self.data.render_finished_semaphores[self.frame]];
+
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(wait_semaphores)
+            .wait_dst_stage_mask(wait_stages)
+            .command_buffers(command_buffers)
+            .signal_semaphores(signal_semaphores);
+
+        self.device
+            .reset_fences(&[self.data.in_flight_fences[self.frame]])?;
+
+        self.device.queue_submit(
+            self.data.graphics_queue,
+            &[*submit_info],
+            self.data.in_flight_fences[self.frame],
+        )?;
+
+        // Submit the result back to the swapchain to have it eventually show up on screen
+        let swapchains = &[self.data.swapchain];
+        let image_indices = &[image_index];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
+
+        self.extensions
+            .swapchain
+            .queue_present(self.data.present_queue, &present_info)?;
+
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+        Ok(())
+    }
+
+    /// Wait for the app's GPU to stop processing. Use this before destroying
+    /// the application and its resources to avoid an immediate crash.
+    unsafe fn wait_for_device_idle(&self) -> Result<()> {
+        self.device.device_wait_idle()?;
         Ok(())
     }
 
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        destroy_sync_objects(&self.device, &self.data);
+
         self.device
             .destroy_command_pool(self.data.command_pool, None);
 
@@ -195,6 +287,21 @@ struct AppData {
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
     /// they're allocated from is destroyed.
     command_buffers: Vec<vk::CommandBuffer>,
+
+    /// Use for signaling that an image has been acquired from the swapchain and
+    /// is ready for rendering.
+    image_available_semaphores: Vec<vk::Semaphore>,
+    /// Use for signaling that rendering has finished and that presentation
+    /// may begin.
+    render_finished_semaphores: Vec<vk::Semaphore>,
+
+    /// Use for pausing the CPU until the GPU has finished rendering once we've
+    /// submitted at least [`MAX_FRAMES_IN_FLIGHT`] frames.
+    in_flight_fences: Vec<vk::Fence>,
+
+    /// Keeps track of CPU-GPU fences while swapchain images are being rendered.
+    /// This prevents rendering to a swapchain image that is already *in flight*.
+    images_in_flight: Vec<vk::Fence>,
 
     /// For handling debug messages sent from Vulkan's validation layers.
     messenger: vk::DebugUtilsMessengerEXT,
@@ -779,12 +886,29 @@ unsafe fn create_render_pass(device: &Device, data: &mut AppData) -> Result<()> 
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(std::slice::from_ref(&color_attachment_ref));
 
+    // Even though we only have a single subpass, we need to specify how to
+    // transition into and out of it. So, we define subpass dependencies here.
+    let dependency = vk::SubpassDependency::builder()
+        // source is the implicit subpass before the render pass
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        // target is our only defined subpass
+        .dst_subpass(0)
+        // wait for the swapchain to read from the image before accessing it
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::empty())
+        // operations that should wait on this dependency are in the color attachment
+        // stage, and involve the writing of the color attachment
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+
     // Finalize the render pass.
     let attachments = &[*color_attachment];
     let subpasses = &[*subpass];
+    let dependencies = &[*dependency];
     let info = vk::RenderPassCreateInfo::builder()
         .attachments(attachments)
-        .subpasses(subpasses);
+        .subpasses(subpasses)
+        .dependencies(dependencies);
 
     data.render_pass = device.create_render_pass(&info, None)?;
 
@@ -1017,6 +1141,44 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
     }
 
     Ok(())
+}
+
+/// Create Vulkan synchronization objects, such as semaphores.
+unsafe fn create_sync_objects(device: &Device, data: &mut AppData) -> Result<()> {
+    let semaphore_info = vk::SemaphoreCreateInfo::builder();
+    let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+
+    for _ in 0..MAX_FRAMES_IN_FLIGHT {
+        data.image_available_semaphores
+            .push(device.create_semaphore(&semaphore_info, None)?);
+        data.render_finished_semaphores
+            .push(device.create_semaphore(&semaphore_info, None)?);
+
+        data.in_flight_fences
+            .push(device.create_fence(&fence_info, None)?);
+    }
+
+    data.images_in_flight = data
+        .swapchain_images
+        .iter()
+        .map(|_| vk::Fence::null())
+        .collect();
+
+    Ok(())
+}
+
+/// Destroy Vulkan synchronization objects, such as semaphores.
+unsafe fn destroy_sync_objects(device: &Device, data: &AppData) {
+    data.render_finished_semaphores
+        .iter()
+        .for_each(|s| device.destroy_semaphore(*s, None));
+    data.image_available_semaphores
+        .iter()
+        .for_each(|s| device.destroy_semaphore(*s, None));
+
+    data.in_flight_fences
+        .iter()
+        .for_each(|f| device.destroy_fence(*f, None));
 }
 
 /// Returns true if Vulkan validation layers should be enabled.
