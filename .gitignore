@@ -1,1 +1,4 @@
 /target
+
+# SPIR-V shader bytecode
+*.spv
