@@ -105,6 +105,7 @@ impl App {
 
         debug!("Creating swapchain");
         create_swapchain(window, &entry, &instance, &device, &mut data)?;
+        create_swapchain_image_views(&device, &mut data)?;
 
         Ok(Self {
             entry,
@@ -123,6 +124,11 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        self.data
+            .swapchain_image_views
+            .iter()
+            .for_each(|v| self.device.destroy_image_view(*v, None));
+
         vk_khr::Swapchain::new(&self.instance, &self.device)
             .destroy_swapchain(self.data.swapchain, None);
 
@@ -151,6 +157,7 @@ struct AppData {
 
     swapchain: vk::SwapchainKHR,
     swapchain_images: Vec<vk::Image>,
+    swapchain_image_views: Vec<vk::ImageView>,
     swapchain_format: vk::Format,
     swapchain_extent: vk::Extent2D,
 
@@ -564,6 +571,49 @@ unsafe fn create_swapchain(
     data.swapchain_images = swapchain_ext.get_swapchain_images(data.swapchain)?;
     data.swapchain_format = surface_format.format;
     data.swapchain_extent = extent;
+
+    Ok(())
+}
+
+/// Create basic views to access parts of the swapchain images.
+#[tracing::instrument(level = "DEBUG", skip_all)]
+unsafe fn create_swapchain_image_views(device: &Device, data: &mut AppData) -> Result<()> {
+    debug!(
+        count = data.swapchain_images.len(),
+        "Creating swapchain image views"
+    );
+
+    data.swapchain_image_views = data
+        .swapchain_images
+        .iter()
+        .map(|i| {
+            // Just keep color channels as they are
+            let components = vk::ComponentMapping::builder()
+                .r(vk::ComponentSwizzle::IDENTITY)
+                .g(vk::ComponentSwizzle::IDENTITY)
+                .b(vk::ComponentSwizzle::IDENTITY)
+                .a(vk::ComponentSwizzle::IDENTITY);
+
+            // Use the images as color targets without any mipmapping or
+            // multiple layers.
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1);
+
+            // Build the image view creation info struct
+            let info = vk::ImageViewCreateInfo::builder()
+                .image(*i)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(data.swapchain_format)
+                .components(*components)
+                .subresource_range(*subresource_range);
+
+            device.create_image_view(&info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(())
 }
