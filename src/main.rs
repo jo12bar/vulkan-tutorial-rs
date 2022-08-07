@@ -127,6 +127,9 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        self.device
+            .destroy_pipeline_layout(self.data.pipeline_layout, None);
+
         self.data
             .swapchain_image_views
             .iter()
@@ -163,6 +166,8 @@ struct AppData {
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain_format: vk::Format,
     swapchain_extent: vk::Extent2D,
+
+    pipeline_layout: vk::PipelineLayout,
 
     /// For handling debug messages sent from Vulkan's validation layers.
     messenger: vk::DebugUtilsMessengerEXT,
@@ -733,6 +738,76 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .stage(vk::ShaderStageFlags::FRAGMENT)
         .module(frag_shader_module)
         .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
+
+    // FIXME(jo12bar): Set up vertex buffers and all that later. Right now the
+    // shaders have hard-coded vertices.
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+
+    // Vertices will be assembled into regular-old triangles.
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    // Take up the entire rendering surface for the viewport
+    let viewport = vk::Viewport::builder()
+        .x(0.0)
+        .y(0.0)
+        .width(data.swapchain_extent.width as f32)
+        .height(data.swapchain_extent.height as f32)
+        .min_depth(0.0)
+        .max_depth(1.0);
+
+    // Draw the ENTIRE viewport
+    let scissor = vk::Rect2D::builder()
+        .offset(vk::Offset2D { x: 0, y: 0 })
+        .extent(data.swapchain_extent);
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+        .viewports(std::slice::from_ref(&viewport))
+        .scissors(std::slice::from_ref(&scissor));
+
+    // Configure the rasterizer
+    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false);
+
+    // For now, disable multisampling
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    // Use alpha blending
+    let attachment = vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+        .alpha_blend_op(vk::BlendOp::ADD);
+
+    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
+        .logic_op_enable(false)
+        .logic_op(vk::LogicOp::COPY)
+        .attachments(std::slice::from_ref(&attachment))
+        .blend_constants([0.0, 0.0, 0.0, 0.0]);
+
+    // We want to be able to modify viewport size and line width dynamically
+    // without having to completely re-create the pipeline.
+    let dynamic_states = &[vk::DynamicState::VIEWPORT, vk::DynamicState::LINE_WIDTH];
+    let dynamic_state =
+        vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(dynamic_states);
+
+    // Setup the pipeline layout, including things like shader uniforms
+    let layout_info = vk::PipelineLayoutCreateInfo::builder();
+
+    data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 
     // Destroy the shader modules
     device.destroy_shader_module(vert_shader_module, None);
