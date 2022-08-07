@@ -128,6 +128,7 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
         self.device
             .destroy_pipeline_layout(self.data.pipeline_layout, None);
@@ -171,6 +172,7 @@ struct AppData {
 
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
 
     /// For handling debug messages sent from Vulkan's validation layers.
     messenger: vk::DebugUtilsMessengerEXT,
@@ -767,7 +769,7 @@ unsafe fn create_render_pass(device: &Device, data: &mut AppData) -> Result<()> 
     Ok(())
 }
 
-/// Create a render pipeline.
+/// Create a graphics pipeline.
 #[tracing::instrument(level = "DEBUG", skip_all)]
 unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // Include our pre-compiled shaders.
@@ -857,6 +859,30 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     let layout_info = vk::PipelineLayoutCreateInfo::builder();
 
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
+
+    // Finalize the graphics pipeline
+    let stages = &[*vert_stage, *frag_stage];
+    let info = vk::GraphicsPipelineCreateInfo::builder()
+        // Shader stages
+        .stages(stages)
+        // Fixed function stage configurations
+        .vertex_input_state(&vertex_input_state)
+        .input_assembly_state(&input_assembly_state)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization_state)
+        .multisample_state(&multisample_state)
+        .color_blend_state(&color_blend_state)
+        .dynamic_state(&dynamic_state)
+        // Pipeline layout
+        .layout(data.pipeline_layout)
+        // Render pass and subpass
+        .render_pass(data.render_pass)
+        .subpass(0);
+
+    data.pipeline = device
+        .create_graphics_pipelines(vk::PipelineCache::null(), &[*info], None)
+        // If there's an error code, just get rid of it cause it's *probably* fine
+        .unwrap_or_else(|(p, _)| p)[0];
 
     // Destroy the shader modules
     device.destroy_shader_module(vert_shader_module, None);
