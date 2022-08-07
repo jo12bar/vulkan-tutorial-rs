@@ -111,6 +111,9 @@ impl App {
         create_render_pass(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
+        debug!("Creating framebuffers");
+        create_framebuffers(&device, &mut data)?;
+
         Ok(Self {
             entry,
             instance,
@@ -128,6 +131,11 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     unsafe fn destroy(&mut self) {
+        self.data
+            .framebuffers
+            .iter()
+            .for_each(|f| self.device.destroy_framebuffer(*f, None));
+
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
         self.device
@@ -173,6 +181,8 @@ struct AppData {
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+
+    framebuffers: Vec<vk::Framebuffer>,
 
     /// For handling debug messages sent from Vulkan's validation layers.
     messenger: vk::DebugUtilsMessengerEXT,
@@ -905,6 +915,28 @@ unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::S
     let info = vk::ShaderModuleCreateInfo::builder().code(code);
 
     Ok(device.create_shader_module(&info, None)?)
+}
+
+/// Create a framebuffer for all iamges in the swapchain.
+#[tracing::instrument(level = "DEBUG", skip_all)]
+unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()> {
+    data.framebuffers = data
+        .swapchain_image_views
+        .iter()
+        .map(|i| {
+            let attachments = &[*i];
+            let create_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(data.render_pass)
+                .attachments(attachments)
+                .width(data.swapchain_extent.width)
+                .height(data.swapchain_extent.height)
+                .layers(1);
+
+            device.create_framebuffer(&create_info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
 }
 
 /// Returns true if Vulkan validation layers should be enabled.
