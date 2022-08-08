@@ -1,6 +1,6 @@
 //! Tools for setting up render pipelines.
 
-use crate::app::AppData;
+use crate::{app::AppData, vertex::Vertex};
 use ash::{vk, Device};
 use color_eyre::{eyre::eyre, Result};
 use std::ffi::CStr;
@@ -89,9 +89,12 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .module(frag_shader_module)
         .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
 
-    // FIXME(jo12bar): Set up vertex buffers and all that later. Right now the
-    // shaders have hard-coded vertices.
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+    // Set up vertex buffers, vertex attributes, and so on.
+    let binding_descriptions = &[Vertex::binding_description()];
+    let attribute_descriptions = Vertex::attribute_descriptions();
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(binding_descriptions)
+        .vertex_attribute_descriptions(&attribute_descriptions);
 
     // Vertices will be assembled into regular-old triangles.
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
