@@ -16,6 +16,7 @@ fn main() -> Result<()> {
     info!("Initializing app");
     let mut app = unsafe { App::create(&window)? };
     let mut destroying = false;
+    let mut is_minimized = false;
 
     info!("Running event loop");
     event_loop.run(move |event, _, control_flow| {
@@ -23,8 +24,24 @@ fn main() -> Result<()> {
         *control_flow = ControlFlow::Poll;
 
         match event {
-            // Render a frame if our Vulkan app is not being destroyed
-            Event::MainEventsCleared if !destroying => unsafe { app.render(&window) }.unwrap(),
+            // Render a frame if our Vulkan app is not being destroyed and if
+            // it is not minimized.
+            Event::MainEventsCleared if !destroying && !is_minimized => {
+                unsafe { app.render(&window) }.unwrap()
+            }
+
+            // Signal to our app if the window is resized, and track minimization.
+            Event::WindowEvent {
+                event: WindowEvent::Resized(size),
+                ..
+            } => {
+                if size.width == 0 || size.height == 0 {
+                    is_minimized = true;
+                } else {
+                    is_minimized = false;
+                    app.trigger_resize();
+                }
+            }
 
             // Destroy our Vulkan app if requested
             Event::WindowEvent {

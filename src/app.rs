@@ -31,6 +31,12 @@ pub struct App {
 
     /// The frame we're currently rendering
     frame: usize,
+
+    /// Tracks if the window has been resized and the app needs to handle that.
+    /// Set to true to signal to the app that the window has been resized.
+    /// If it's set to false at some point, then the app has handled the resize
+    /// event.
+    resized: bool,
 }
 
 /// Vulkan handles and associated properties used by our Vulkan [`App`].
@@ -135,7 +141,51 @@ impl App {
             device,
             extensions,
             frame: 0,
+            resized: false,
         })
+    }
+
+    /// Trigger an app resize. Call this if the window manager has indicated that
+    /// the window has resized. The app will then handle re-creating swapchains,
+    /// graphics pipelines, and so on the next time [`App::render()`] is called.
+    #[inline]
+    pub fn trigger_resize(&mut self) {
+        self.resized = true;
+    }
+
+    /// Re-creates the swapchain, which is required when (for example) the window
+    /// is resized.
+    ///
+    /// Due to Vulkan's hierarchy of object dependencies, this also recreates the
+    /// render passes, graphics pipeline, framebuffers, and command buffers.
+    ///
+    /// # Safety
+    ///
+    /// Lol you thought
+    #[tracing::instrument(level = "DEBUG", name = "App::recreate_swapchain", skip_all)]
+    unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
+        self.device.device_wait_idle()?;
+        self.destroy_swapchain();
+
+        create_swapchain(
+            window,
+            &self.entry,
+            &self.instance,
+            &self.device,
+            &mut self.data,
+        )?;
+        create_swapchain_image_views(&self.device, &mut self.data)?;
+        create_render_pass(&self.device, &mut self.data)?;
+        create_pipeline(&self.device, &mut self.data)?;
+        create_framebuffers(&self.device, &mut self.data)?;
+        create_command_buffers(&self.device, &mut self.data)?;
+        self.data
+            .images_in_flight
+            .resize(self.data.swapchain_images.len(), vk::Fence::null());
+
+        self.resized = false;
+
+        Ok(())
     }
 
     /// Render a frame to the Vulkan app.
@@ -144,19 +194,32 @@ impl App {
     ///
     /// Extremely unsafe &mdash; but faster.
     //#[tracing::instrument(level = "TRACE", name = "App::render", skip_all)]
-    pub unsafe fn render(&mut self, _window: &Window) -> Result<()> {
+    pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
         // If we already have MAX_FRAMES_IN_FLIGHT frames busy being rendered,
         // wait for them all to finish rendering before we submit a new frame.
         self.device
             .wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX)?;
 
         // Acquire an image from the swapchain.
-        let (image_index, _is_suboptimal) = self.extensions.swapchain.acquire_next_image(
+        let result = self.extensions.swapchain.acquire_next_image(
             self.data.swapchain,
             u64::MAX,
             self.data.image_available_semaphores[self.frame],
             vk::Fence::null(),
-        )?;
+        );
+
+        // If the swapchain is now incompatible with the rendering surface (e.g the
+        // window was resized) then recreate it and just return early.
+        let image_index = match result {
+            Ok((image_index, _swapchain_is_suboptimal)) => image_index,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Err(e) => {
+                return Err(eyre!(
+                    "Acquiring swapchain image failed due to Vulkan error: [{0:?}] {0}",
+                    e
+                ))
+            }
+        };
 
         // If this particular image is already in flight, wait for it to finish!
         if self.data.images_in_flight[image_index as usize] != vk::Fence::null() {
@@ -198,9 +261,24 @@ impl App {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        self.extensions
+        let result = self
+            .extensions
             .swapchain
-            .queue_present(self.data.present_queue, &present_info)?;
+            .queue_present(self.data.present_queue, &present_info);
+
+        // Recreate the swapchain if needed
+        let swapchain_must_be_recreated =
+            result == Ok(true) || result == Err(vk::Result::ERROR_OUT_OF_DATE_KHR);
+
+        if self.resized || swapchain_must_be_recreated {
+            self.recreate_swapchain(window)?;
+        } else if let Err(e) = result {
+            // some other error happened while queing the image for presentation
+            return Err(eyre!(
+                "Failed to queue image in swapchain for presentation due to Vulkan error: [{0:?}] {0}",
+                e
+            ));
+        }
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -221,28 +299,12 @@ impl App {
     /// Destroys the Vulkan app. If this isn't called, then resources may be leaked.
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     pub unsafe fn destroy(&mut self) {
+        self.destroy_swapchain();
+
         destroy_sync_objects(&self.device, &self.data);
 
         self.device
             .destroy_command_pool(self.data.command_pool, None);
-
-        self.data
-            .framebuffers
-            .iter()
-            .for_each(|f| self.device.destroy_framebuffer(*f, None));
-
-        self.device.destroy_pipeline(self.data.pipeline, None);
-        self.device.destroy_render_pass(self.data.render_pass, None);
-        self.device
-            .destroy_pipeline_layout(self.data.pipeline_layout, None);
-
-        self.data
-            .swapchain_image_views
-            .iter()
-            .for_each(|v| self.device.destroy_image_view(*v, None));
-
-        vk_khr::Swapchain::new(&self.instance, &self.device)
-            .destroy_swapchain(self.data.swapchain, None);
 
         self.device.destroy_device(None);
 
@@ -254,5 +316,35 @@ impl App {
         }
 
         self.instance.destroy_instance(None);
+    }
+
+    /// Destroy objects associated with the swapchain.
+    ///
+    /// # Safety
+    ///
+    /// Will destroy you in 1v1 Halo deathmatch
+    #[tracing::instrument(level = "DEBUG", name = "App::destroy_swapchain", skip_all)]
+    unsafe fn destroy_swapchain(&mut self) {
+        self.data
+            .framebuffers
+            .iter()
+            .for_each(|f| self.device.destroy_framebuffer(*f, None));
+
+        self.device
+            .free_command_buffers(self.data.command_pool, &self.data.command_buffers);
+
+        self.device.destroy_pipeline(self.data.pipeline, None);
+        self.device
+            .destroy_pipeline_layout(self.data.pipeline_layout, None);
+
+        self.device.destroy_render_pass(self.data.render_pass, None);
+
+        self.data
+            .swapchain_image_views
+            .iter()
+            .for_each(|v| self.device.destroy_image_view(*v, None));
+        self.extensions
+            .swapchain
+            .destroy_swapchain(self.data.swapchain, None);
     }
 }
