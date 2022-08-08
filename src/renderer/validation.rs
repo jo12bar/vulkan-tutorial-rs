@@ -27,9 +27,27 @@ pub(crate) extern "system" fn vk_debug_callback(
     data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _: *mut c_void,
 ) -> vk::Bool32 {
-    let data = unsafe { *data };
-    let message_id = unsafe { CStr::from_ptr(data.p_message_id_name) }.to_string_lossy();
-    let message = unsafe { CStr::from_ptr(data.p_message) }.to_string_lossy();
+    let data = if data.is_null() {
+        return vk::FALSE;
+    } else {
+        unsafe { *data }
+    };
+    let message_id = unsafe {
+        if data.p_message_id_name.is_null() {
+            CStr::from_bytes_with_nul_unchecked(b"<undefined id>\0")
+        } else {
+            CStr::from_ptr(data.p_message)
+        }
+    }
+    .to_string_lossy();
+    let message = unsafe {
+        if data.p_message.is_null() {
+            CStr::from_bytes_with_nul_unchecked(b"<undefined message>\0")
+        } else {
+            CStr::from_ptr(data.p_message)
+        }
+    }
+    .to_string_lossy();
 
     if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::ERROR {
         error!({"type" = ?typ, id = %message_id}, "{}", message);
