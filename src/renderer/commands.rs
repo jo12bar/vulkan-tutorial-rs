@@ -16,11 +16,22 @@ pub(crate) unsafe fn create_command_pool(
 ) -> Result<()> {
     let qf_indices = QueueFamilyIndices::get(entry, instance, data, data.physical_device)?;
 
+    // Create a regular command pool for command buffers that might live a relatively long time.
     let info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::empty())
         .queue_family_index(qf_indices.graphics);
 
     data.command_pool = device.create_command_pool(&info, None)?;
+
+    // Create a command pool specifically for "transient" command buffers,
+    // which will be short-lived and will be reset or freed in a relatively
+    // short timeframe. This can possibly enable memory allocation optimizations
+    // by the implementation.
+    let info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+        .queue_family_index(qf_indices.graphics);
+
+    data.transient_command_pool = device.create_command_pool(&info, None)?;
 
     Ok(())
 }

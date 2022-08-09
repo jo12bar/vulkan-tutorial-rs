@@ -69,6 +69,10 @@ pub struct AppData {
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
     /// they're allocated from is destroyed.
     pub command_buffers: Vec<vk::CommandBuffer>,
+    /// This command pool should only be used for very short-lived command buffers.
+    /// That's why there's no place in this struct to store buffers allocated from
+    /// it.
+    pub transient_command_pool: vk::CommandPool,
 
     /// Use for signaling that an image has been acquired from the swapchain and
     /// is ready for rendering.
@@ -127,11 +131,9 @@ impl App {
         debug!("Creating framebuffers");
         create_framebuffers(&device, &mut data)?;
 
-        debug!("Creating vertex buffers");
-        create_vertex_buffer(&instance, &device, &mut data)?;
-
-        debug!("Creating command buffers");
+        debug!("Creating command buffers and vertex buffers");
         create_command_pool(&entry, &instance, &device, &mut data)?;
+        create_vertex_buffer(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
@@ -313,6 +315,8 @@ impl App {
 
         self.device
             .destroy_command_pool(self.data.command_pool, None);
+        self.device
+            .destroy_command_pool(self.data.transient_command_pool, None);
 
         self.device.destroy_device(None);
 
