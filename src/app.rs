@@ -1,5 +1,7 @@
 use crate::renderer::{
-    buffers::{create_vertex_buffer, destroy_vertex_buffer},
+    buffers::{
+        create_index_buffer, create_vertex_buffer, destroy_index_buffer, destroy_vertex_buffer,
+    },
     commands::{create_command_buffers, create_command_pool},
     devices::{create_logical_device, pick_physical_device},
     extensions::Extensions,
@@ -64,6 +66,8 @@ pub struct AppData {
 
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
 
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
@@ -131,9 +135,10 @@ impl App {
         debug!("Creating framebuffers");
         create_framebuffers(&device, &mut data)?;
 
-        debug!("Creating command buffers and vertex buffers");
+        debug!("Creating command, vertex, and index buffers");
         create_command_pool(&entry, &instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
+        create_index_buffer(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
@@ -311,6 +316,7 @@ impl App {
         self.destroy_swapchain();
 
         destroy_vertex_buffer(&self.device, &self.data);
+        destroy_index_buffer(&self.device, &self.data);
         destroy_sync_objects(&self.device, &self.data);
 
         self.device

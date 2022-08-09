@@ -1,7 +1,7 @@
 //! Command buffer recording and allocating.
 
 use super::devices::QueueFamilyIndices;
-use crate::{app::AppData, vertex::VERTICES};
+use crate::{app::AppData, vertex::INDICES};
 use ash::{vk, Device, Entry, Instance};
 use color_eyre::Result;
 use tracing::debug;
@@ -81,7 +81,8 @@ pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData)
             data.pipeline,
         );
         device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
-        device.cmd_draw(*command_buffer, VERTICES.len() as u32, 1, 0, 0); // three vertices hardcoded in vertex shader
+        device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
+        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 1, 0, 0, 0); // three vertices hardcoded in vertex shader
 
         // End drawing
         device.cmd_end_render_pass(*command_buffer);

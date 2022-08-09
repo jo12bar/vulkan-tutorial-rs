@@ -7,7 +7,7 @@ use color_eyre::Result;
 
 use crate::{
     app::AppData,
-    vertex::{Vertex, VERTICES},
+    vertex::{Vertex, INDICES, VERTICES},
 };
 
 use super::memory::get_memory_type_index;
@@ -67,6 +67,63 @@ pub unsafe fn create_vertex_buffer(
 pub unsafe fn destroy_vertex_buffer(device: &Device, data: &AppData) {
     device.destroy_buffer(data.vertex_buffer, None);
     device.free_memory(data.vertex_buffer_memory, None);
+}
+
+/// Create index buffers for use by the app.
+#[tracing::instrument(level = "DEBUG", skip_all)]
+pub unsafe fn create_index_buffer(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // Create an index buffer for our static set of vertex indices (in lieu of proper model loading)
+    let size = (size_of::<u16>() * INDICES.len()) as u64;
+
+    // First copy the indices to a host-visible staging buffer
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
+        instance,
+        device,
+        data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
+    )?;
+
+    {
+        // keep the memory map pointer inside this scope to avoid use-after-free
+        let memory =
+            device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
+        ptr::copy_nonoverlapping(INDICES.as_ptr(), memory.cast(), INDICES.len());
+        device.unmap_memory(staging_buffer_memory);
+    }
+
+    // Copy the indices from the staging buffer to the highest-performance memory
+    // buffer the GPU will give us
+    let (index_buffer, index_buffer_memory) = create_buffer(
+        instance,
+        device,
+        data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    data.index_buffer = index_buffer;
+    data.index_buffer_memory = index_buffer_memory;
+
+    copy_buffer(device, data, staging_buffer, index_buffer, size)?;
+
+    // remember to free the staging buffer
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+
+    Ok(())
+}
+
+/// Destroy the index buffer created in [`create_index_buffer()`].
+pub unsafe fn destroy_index_buffer(device: &Device, data: &AppData) {
+    device.destroy_buffer(data.index_buffer, None);
+    device.free_memory(data.index_buffer_memory, None);
 }
 
 /// Create some type of buffer.

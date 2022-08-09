@@ -58,8 +58,12 @@ impl Vertex {
 lazy_static! {
     /// Vertices to be sent to the GPU in lieu of proper model loading.
     pub static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(glm::vec3(0.0, -0.5, 0.0), glm::vec3(1.0, 0.0, 0.0)),
-        Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
-        Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
+        Vertex::new(glm::vec3(-0.5, -0.5, 0.0), glm::vec3(1.0, 0.0, 0.0)),
+        Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
+        Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
+        Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0)),
     ];
 }
+
+/// The order of indices in [`VERTICES`] to be drawn.
+pub const INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
