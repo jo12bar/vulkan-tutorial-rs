@@ -1,4 +1,5 @@
 use crate::renderer::{
+    buffers::{create_vertex_buffer, destroy_vertex_buffer},
     commands::{create_command_buffers, create_command_pool},
     devices::{create_logical_device, pick_physical_device},
     extensions::Extensions,
@@ -61,6 +62,9 @@ pub struct AppData {
 
     pub framebuffers: Vec<vk::Framebuffer>,
 
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_buffer_memory: vk::DeviceMemory,
+
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
     /// they're allocated from is destroyed.
@@ -122,6 +126,9 @@ impl App {
 
         debug!("Creating framebuffers");
         create_framebuffers(&device, &mut data)?;
+
+        debug!("Creating vertex buffers");
+        create_vertex_buffer(&instance, &device, &mut data)?;
 
         debug!("Creating command buffers");
         create_command_pool(&entry, &instance, &device, &mut data)?;
@@ -301,6 +308,7 @@ impl App {
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
 
+        destroy_vertex_buffer(&self.device, &self.data);
         destroy_sync_objects(&self.device, &self.data);
 
         self.device
