@@ -1,3 +1,6 @@
+use crate::renderer::uniforms::{
+    create_descriptor_pool, create_descriptor_sets, destroy_descriptor_pool,
+};
 use crate::MAX_FRAMES_IN_FLIGHT;
 use crate::{
     mvp_matrix::MvpMat,
@@ -49,6 +52,9 @@ pub struct App {
     /// event.
     resized: bool,
 
+    /// Global model-view-projection matrix.
+    mvp_mat: MvpMat,
+
     /// The time that the last frame was rendered at. Used for keeping basic
     /// animations temporally accurate, regardless of framerate.
     ///
@@ -90,6 +96,9 @@ pub struct AppData {
     /// each swapchain image's command buffer.
     pub uniform_buffers: Vec<vk::Buffer>,
     pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    pub descriptor_pool: vk::DescriptorPool,
+    /// One descriptor set per swapchain image.
+    pub descriptor_sets: Vec<vk::DescriptorSet>,
 
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
@@ -158,11 +167,13 @@ impl App {
         debug!("Creating framebuffers");
         create_framebuffers(&device, &mut data)?;
 
-        debug!("Creating command, vertex, and index buffers");
+        debug!("Creating command, vertex, index, and uniform buffers");
         create_command_pool(&entry, &instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
+        create_descriptor_pool(&device, &mut data)?;
+        create_descriptor_sets(&device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
@@ -180,6 +191,7 @@ impl App {
             extensions,
             frame: 0,
             resized: false,
+            mvp_mat: MvpMat::default(),
             last_frame_time: Instant::now(),
         })
     }
@@ -218,6 +230,8 @@ impl App {
         create_pipeline(&self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
+        create_descriptor_pool(&self.device, &mut self.data)?;
+        create_descriptor_sets(&self.device, &mut self.data)?;
         create_command_buffers(&self.device, &mut self.data)?;
         self.data
             .images_in_flight
@@ -338,7 +352,7 @@ impl App {
 
         // Rotate the model 90 degrees per second about its z axis
         let model = glm::rotate(
-            &glm::identity(),
+            &self.mvp_mat.model,
             delta_t * glm::radians(&glm::vec1(90.0))[0],
             &glm::vec3(0.0, 0.0, 1.0),
         );
@@ -365,7 +379,7 @@ impl App {
         projection[(1, 1)] *= -1.0;
 
         // Send model-view-projection matrix to the GPU
-        let mvp_mat = MvpMat {
+        self.mvp_mat = MvpMat {
             model,
             view,
             projection,
@@ -379,7 +393,7 @@ impl App {
                 size_of::<MvpMat>() as u64,
                 vk::MemoryMapFlags::empty(),
             )?;
-            ptr::copy_nonoverlapping(&mvp_mat, memory.cast(), 1);
+            ptr::copy_nonoverlapping(&self.mvp_mat, memory.cast(), 1);
             self.device
                 .unmap_memory(self.data.uniform_buffers_memory[image_index as usize]);
         }
@@ -433,6 +447,7 @@ impl App {
     /// Will destroy you in 1v1 Halo deathmatch
     #[tracing::instrument(level = "DEBUG", name = "App::destroy_swapchain", skip_all)]
     unsafe fn destroy_swapchain(&mut self) {
+        destroy_descriptor_pool(&self.device, &self.data);
         destroy_uniform_buffers(&self.device, &self.data);
 
         self.data

@@ -126,7 +126,7 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::CLOCKWISE)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
     // For now, disable multisampling

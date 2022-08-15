@@ -17,3 +17,30 @@ pub struct MvpMat {
     pub view: glm::Mat4,
     pub projection: glm::Mat4,
 }
+
+impl MvpMat {
+    pub fn new() -> Self {
+        let mut this = Self {
+            model: glm::identity(),
+            view: glm::look_at(
+                &glm::vec3(0.0, 0.0, 0.0),
+                &glm::vec3(0.0, 0.0, 0.0),
+                &glm::vec3(0.0, 0.0, 1.0),
+            ),
+            projection: glm::perspective(16.0 / 9.0, glm::radians(&glm::vec1(45.0))[0], 0.1, 10.0),
+        };
+
+        // Vulkan's Y axis is flipped compared to OpenGL, which GLM was originally
+        // designed for. Compensate for this by flipping the y-axis's scaling factor
+        // in the projection matrix.
+        this.projection[(1, 1)] *= -1.0;
+
+        this
+    }
+}
+
+impl Default for MvpMat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
