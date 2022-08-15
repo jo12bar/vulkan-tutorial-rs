@@ -7,4 +7,5 @@ pub mod memory;
 pub mod pipeline;
 pub mod swapchain;
 pub mod synchronization;
+pub mod uniforms;
 pub mod validation;

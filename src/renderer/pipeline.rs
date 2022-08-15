@@ -152,7 +152,8 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
     // Setup the pipeline layout, including things like shader uniforms
-    let layout_info = vk::PipelineLayoutCreateInfo::builder();
+    let layout_info = vk::PipelineLayoutCreateInfo::builder()
+        .set_layouts(std::slice::from_ref(&data.descriptor_set_layout));
 
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 

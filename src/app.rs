@@ -1,17 +1,21 @@
-use crate::renderer::{
-    buffers::{
-        create_index_buffer, create_vertex_buffer, destroy_index_buffer, destroy_vertex_buffer,
-    },
-    commands::{create_command_buffers, create_command_pool},
-    devices::{create_logical_device, pick_physical_device},
-    extensions::Extensions,
-    instance::create_instance,
-    pipeline::{create_framebuffers, create_pipeline, create_render_pass},
-    swapchain::{create_swapchain, create_swapchain_image_views},
-    synchronization::{create_sync_objects, destroy_sync_objects},
-    validation::should_enable_validation_layers,
-};
 use crate::MAX_FRAMES_IN_FLIGHT;
+use crate::{
+    mvp_matrix::MvpMat,
+    renderer::{
+        buffers::{
+            create_index_buffer, create_vertex_buffer, destroy_index_buffer, destroy_vertex_buffer,
+        },
+        commands::{create_command_buffers, create_command_pool},
+        devices::{create_logical_device, pick_physical_device},
+        extensions::Extensions,
+        instance::create_instance,
+        pipeline::{create_framebuffers, create_pipeline, create_render_pass},
+        swapchain::{create_swapchain, create_swapchain_image_views},
+        synchronization::{create_sync_objects, destroy_sync_objects},
+        uniforms::{create_descriptor_set_layout, create_uniform_buffers, destroy_uniform_buffers},
+        validation::should_enable_validation_layers,
+    },
+};
 use ash::{
     extensions::{ext as vk_ext, khr as vk_khr},
     vk, Device, Entry, Instance,
@@ -20,6 +24,10 @@ use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
+use nalgebra_glm as glm;
+use std::mem::size_of;
+use std::ptr;
+use std::time::Instant;
 use tracing::debug;
 use winit::window::Window;
 
@@ -40,6 +48,15 @@ pub struct App {
     /// If it's set to false at some point, then the app has handled the resize
     /// event.
     resized: bool,
+
+    /// The time that the last frame was rendered at. Used for keeping basic
+    /// animations temporally accurate, regardless of framerate.
+    ///
+    /// Because of Vulkan's asynchronus nature, this isn't the *actual* time the
+    /// last frame was rendered at - but it's good enough for uniform buffers,
+    /// especially when we make the CPU wait for the GPU to render
+    /// MAX_FRAMES_IN_FLIGHT frames with memory fences.
+    last_frame_time: Instant,
 }
 
 /// Vulkan handles and associated properties used by our Vulkan [`App`].
@@ -59,6 +76,7 @@ pub struct AppData {
     pub swapchain_extent: vk::Extent2D,
 
     pub render_pass: vk::RenderPass,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
 
@@ -68,10 +86,14 @@ pub struct AppData {
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+    /// One uniform buffer per swapchain image, because we refer to it from
+    /// each swapchain image's command buffer.
+    pub uniform_buffers: Vec<vk::Buffer>,
+    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
 
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
-    /// they're allocated from is destroyed.
+    /// they're allocated from is destroyed. One per swapchain image.
     pub command_buffers: Vec<vk::CommandBuffer>,
     /// This command pool should only be used for very short-lived command buffers.
     /// That's why there's no place in this struct to store buffers allocated from
@@ -130,6 +152,7 @@ impl App {
 
         debug!("Creating render pipeline");
         create_render_pass(&device, &mut data)?;
+        create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
         debug!("Creating framebuffers");
@@ -139,6 +162,7 @@ impl App {
         create_command_pool(&entry, &instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
+        create_uniform_buffers(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;
@@ -156,6 +180,7 @@ impl App {
             extensions,
             frame: 0,
             resized: false,
+            last_frame_time: Instant::now(),
         })
     }
 
@@ -192,6 +217,7 @@ impl App {
         create_render_pass(&self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
+        create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_command_buffers(&self.device, &mut self.data)?;
         self.data
             .images_in_flight
@@ -246,6 +272,8 @@ impl App {
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
+        self.update_uniform_buffers(image_index)?;
+
         // Submit command buffers to the queue for rendering.
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -299,6 +327,66 @@ impl App {
         Ok(())
     }
 
+    /// Update all uniform buffers that need updating. Should be called right
+    /// after we wait for the fence for the acquired swapchain image to be
+    /// signalled in the render loop.
+    fn update_uniform_buffers(&mut self, image_index: u32) -> Result<()> {
+        // Figure out how much time has approximately passed since the last frame.
+        let now = Instant::now();
+        let delta_t = (now - self.last_frame_time).as_secs_f32();
+        self.last_frame_time = now;
+
+        // Rotate the model 90 degrees per second about its z axis
+        let model = glm::rotate(
+            &glm::identity(),
+            delta_t * glm::radians(&glm::vec1(90.0))[0],
+            &glm::vec3(0.0, 0.0, 1.0),
+        );
+
+        // Look at model from above at an angle
+        let view = glm::look_at(
+            &glm::vec3(2.0, 2.0, 2.0),
+            &glm::vec3(0.0, 0.0, 0.0),
+            &glm::vec3(0.0, 0.0, 1.0),
+        );
+
+        // Use a perspective projection with a 45-degree vertical FOV. Make sure
+        // use the current swapchain extent so the aspect ratio is correct!
+        let mut projection = glm::perspective(
+            self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
+            glm::radians(&glm::vec1(45.0))[0],
+            0.1,
+            10.0,
+        );
+
+        // Vulkan's Y axis is flipped compared to OpenGL, which GLM was originally
+        // designed for. Compensate for this by flipping the y-axis's scaling factor
+        // in the projection matrix.
+        projection[(1, 1)] *= -1.0;
+
+        // Send model-view-projection matrix to the GPU
+        let mvp_mat = MvpMat {
+            model,
+            view,
+            projection,
+        };
+
+        unsafe {
+            // scope the memory-map pointer for safety
+            let memory = self.device.map_memory(
+                self.data.uniform_buffers_memory[image_index as usize],
+                0,
+                size_of::<MvpMat>() as u64,
+                vk::MemoryMapFlags::empty(),
+            )?;
+            ptr::copy_nonoverlapping(&mvp_mat, memory.cast(), 1);
+            self.device
+                .unmap_memory(self.data.uniform_buffers_memory[image_index as usize]);
+        }
+
+        Ok(())
+    }
+
     /// Wait for the app's GPU to stop processing. Use this before destroying
     /// the application and its resources to avoid an immediate crash.
     ///
@@ -314,6 +402,8 @@ impl App {
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
+        self.device
+            .destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
 
         destroy_vertex_buffer(&self.device, &self.data);
         destroy_index_buffer(&self.device, &self.data);
@@ -343,6 +433,8 @@ impl App {
     /// Will destroy you in 1v1 Halo deathmatch
     #[tracing::instrument(level = "DEBUG", name = "App::destroy_swapchain", skip_all)]
     unsafe fn destroy_swapchain(&mut self) {
+        destroy_uniform_buffers(&self.device, &self.data);
+
         self.data
             .framebuffers
             .iter()

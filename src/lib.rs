@@ -1,4 +1,5 @@
 pub mod app;
+pub(crate) mod mvp_matrix;
 pub(crate) mod renderer;
 pub mod util;
 pub(crate) mod vertex;
