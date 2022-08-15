@@ -3,6 +3,11 @@ name = "vk-tut"
 version = "0.1.0"
 edition = "2021"
 
+authors = ["Johann M. Barnard <johann.b@telus.net>"]
+license = "Apache-2.0"
+
+description = "A Rust implementation of the famous vulkan-tutorial.com"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
