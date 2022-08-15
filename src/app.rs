@@ -350,41 +350,26 @@ impl App {
         let delta_t = (now - self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
 
-        // Rotate the model 90 degrees per second about its z axis
-        let model = glm::rotate(
-            &self.mvp_mat.model,
-            delta_t * glm::radians(&glm::vec1(90.0))[0],
-            &glm::vec3(0.0, 0.0, 1.0),
-        );
-
-        // Look at model from above at an angle
-        let view = glm::look_at(
-            &glm::vec3(2.0, 2.0, 2.0),
-            &glm::vec3(0.0, 0.0, 0.0),
-            &glm::vec3(0.0, 0.0, 1.0),
-        );
-
-        // Use a perspective projection with a 45-degree vertical FOV. Make sure
-        // use the current swapchain extent so the aspect ratio is correct!
-        let mut projection = glm::perspective(
-            self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-            glm::radians(&glm::vec1(45.0))[0],
-            0.1,
-            10.0,
-        );
-
-        // Vulkan's Y axis is flipped compared to OpenGL, which GLM was originally
-        // designed for. Compensate for this by flipping the y-axis's scaling factor
-        // in the projection matrix.
-        projection[(1, 1)] *= -1.0;
+        // Update model-view-projection matrix
+        self.mvp_mat
+            // Rotate the model 90 degrees per second about its z axis
+            .model_rotate_z(delta_t * glm::radians(&glm::vec1(90.0))[0])
+            // Look at model from above at an angle
+            .look_at(
+                &glm::vec3(2.0, 2.0, 2.0),
+                &glm::vec3(0.0, 0.0, 0.0),
+                &glm::vec3(0.0, 0.0, 1.0),
+            )
+            // Use a perspective projection with a 45-degree vertical FOV. Make sure
+            // use the current swapchain extent so the aspect ratio is correct!
+            .perspective(
+                self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
+                glm::radians(&glm::vec1(45.0))[0],
+                0.1,
+                10.0,
+            );
 
         // Send model-view-projection matrix to the GPU
-        self.mvp_mat = MvpMat {
-            model,
-            view,
-            projection,
-        };
-
         unsafe {
             // scope the memory-map pointer for safety
             let memory = self.device.map_memory(

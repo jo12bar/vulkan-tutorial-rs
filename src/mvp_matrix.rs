@@ -37,6 +37,36 @@ impl MvpMat {
 
         this
     }
+
+    /// Rotate the model by `a` radians about its z-axis.
+    pub fn model_rotate_z(&mut self, a: f32) -> &mut Self {
+        self.model = glm::rotate(&self.model, a, &glm::vec3(0.0, 0.0, 1.0));
+        self
+    }
+
+    /// Position and orientate the camera.
+    pub fn look_at(
+        &mut self,
+        eye: &glm::TVec3<f32>,
+        center: &glm::TVec3<f32>,
+        up: &glm::TVec3<f32>,
+    ) -> &mut Self {
+        self.view = glm::look_at(eye, center, up);
+        self
+    }
+
+    /// Set the aspect ratio, vertical field-of-view, and far / near clip planes
+    /// all at once.
+    pub fn perspective(&mut self, aspect_ratio: f32, fovy: f32, near: f32, far: f32) -> &mut Self {
+        self.projection = glm::perspective(aspect_ratio, fovy, near, far);
+
+        // Vulkan's Y axis is flipped compared to OpenGL, which GLM was originally
+        // designed for. Compensate for this by flipping the y-axis's scaling factor
+        // in the projection matrix.
+        self.projection[(1, 1)] *= -1.0;
+
+        self
+    }
 }
 
 impl Default for MvpMat {
