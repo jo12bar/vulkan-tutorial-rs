@@ -21,8 +21,15 @@ pub unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) 
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::VERTEX);
 
-    let info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(std::slice::from_ref(&mvp_mat_binding));
+    // Bind a combined image sampler for the fragment shader
+    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(1)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let bindings = &[*mvp_mat_binding, *sampler_binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
 
     data.descriptor_set_layout = device.create_descriptor_set_layout(&info, None)?;
 
@@ -85,8 +92,13 @@ pub unsafe fn create_descriptor_pool(device: &Device, data: &mut AppData) -> Res
         .ty(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(data.swapchain_images.len() as u32);
 
+    let sampler_size = vk::DescriptorPoolSize::builder()
+        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(data.swapchain_images.len() as u32);
+
+    let pool_sizes = &[*ubo_size, *sampler_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
-        .pool_sizes(std::slice::from_ref(&ubo_size))
+        .pool_sizes(pool_sizes)
         .max_sets(data.swapchain_images.len() as u32);
 
     data.descriptor_pool = device.create_descriptor_pool(&info, None)?;
@@ -132,7 +144,20 @@ pub unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Res
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .buffer_info(std::slice::from_ref(&info));
 
-        device.update_descriptor_sets(std::slice::from_ref(&mvp_mat_write), &[] as _);
+        // Define access to the combined image sampler
+        let info = vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(data.texture_image_view)
+            .sampler(data.texture_sampler);
+
+        let sampler_write = vk::WriteDescriptorSet::builder()
+            .dst_set(data.descriptor_sets[i])
+            .dst_binding(1)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(std::slice::from_ref(&info));
+
+        device.update_descriptor_sets(&[*mvp_mat_write, *sampler_write], &[] as _);
     }
 
     Ok(())
