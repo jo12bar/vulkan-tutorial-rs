@@ -7,6 +7,8 @@ use color_eyre::Result;
 use tracing::debug;
 use winit::window::Window;
 
+use super::texture::create_image_view;
+
 /// Create the swapchain.
 #[tracing::instrument(level = "DEBUG", skip_all)]
 pub(crate) unsafe fn create_swapchain(
@@ -99,33 +101,7 @@ pub(crate) unsafe fn create_swapchain_image_views(
     data.swapchain_image_views = data
         .swapchain_images
         .iter()
-        .map(|i| {
-            // Just keep color channels as they are
-            let components = vk::ComponentMapping::builder()
-                .r(vk::ComponentSwizzle::IDENTITY)
-                .g(vk::ComponentSwizzle::IDENTITY)
-                .b(vk::ComponentSwizzle::IDENTITY)
-                .a(vk::ComponentSwizzle::IDENTITY);
-
-            // Use the images as color targets without any mipmapping or
-            // multiple layers.
-            let subresource_range = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1);
-
-            // Build the image view creation info struct
-            let info = vk::ImageViewCreateInfo::builder()
-                .image(*i)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(data.swapchain_format)
-                .components(*components)
-                .subresource_range(*subresource_range);
-
-            device.create_image_view(&info, None)
-        })
+        .map(|i| create_image_view(device, *i, data.swapchain_format))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(())

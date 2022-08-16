@@ -97,6 +97,14 @@ unsafe fn check_physical_device(
         ));
     }
 
+    // We require anisotropy support, because almost every modern graphics card
+    // we care about supports it.
+    if features.sampler_anisotropy != vk::TRUE {
+        return Err(PhysicalDeviceSuitabilityError::Unsuitable(
+            "Missing sampler anisotropy support.",
+        ));
+    }
+
     // if the following function call doesn't panic, then the device supports
     // all the queue families needed for this app. we just discard the queue
     // family indices immediately though.
@@ -185,7 +193,7 @@ pub(crate) unsafe fn create_logical_device(
     };
 
     // Set up device-specific features
-    let features = vk::PhysicalDeviceFeatures::builder();
+    let features = vk::PhysicalDeviceFeatures::builder().sampler_anisotropy(true);
 
     // Convert our list of absolutely-required extensions to a seires of
     // null-terminated string pointers.

@@ -1,8 +1,3 @@
-use crate::renderer::texture::create_texture_image;
-use crate::renderer::uniforms::{
-    create_descriptor_pool, create_descriptor_sets, destroy_descriptor_pool,
-};
-use crate::MAX_FRAMES_IN_FLIGHT;
 use crate::{
     mvp_matrix::MvpMat,
     renderer::{
@@ -16,10 +11,20 @@ use crate::{
         pipeline::{create_framebuffers, create_pipeline, create_render_pass},
         swapchain::{create_swapchain, create_swapchain_image_views},
         synchronization::{create_sync_objects, destroy_sync_objects},
-        uniforms::{create_descriptor_set_layout, create_uniform_buffers, destroy_uniform_buffers},
+        texture::{create_texture_image, create_texture_image_view, create_texture_sampler},
+        uniforms::{
+            create_descriptor_pool, create_descriptor_set_layout, create_descriptor_sets,
+            create_uniform_buffers, destroy_descriptor_pool, destroy_uniform_buffers,
+        },
         validation::should_enable_validation_layers,
     },
+    MAX_FRAMES_IN_FLIGHT,
 };
+
+use std::mem::size_of;
+use std::ptr;
+use std::time::Instant;
+
 use ash::{
     extensions::{ext as vk_ext, khr as vk_khr},
     vk, Device, Entry, Instance,
@@ -29,9 +34,6 @@ use color_eyre::{
     Result,
 };
 use nalgebra_glm as glm;
-use std::mem::size_of;
-use std::ptr;
-use std::time::Instant;
 use tracing::debug;
 use winit::window::Window;
 
@@ -103,6 +105,9 @@ pub struct AppData {
 
     pub texture_image: vk::Image,
     pub texture_image_memory: vk::DeviceMemory,
+    pub texture_image_format: vk::Format,
+    pub texture_image_view: vk::ImageView,
+    pub texture_sampler: vk::Sampler,
 
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
@@ -172,8 +177,10 @@ impl App {
         create_framebuffers(&device, &mut data)?;
 
         debug!("Creating command, vertex, index, and uniform buffers, and loading textures");
+
         create_command_pool(&entry, &instance, &device, &mut data)?;
-        let (texture_image, texture_image_memory) = create_texture_image(
+
+        let (texture_image, texture_image_memory, texture_image_format) = create_texture_image(
             &instance,
             &device,
             &mut data,
@@ -181,6 +188,11 @@ impl App {
         )?;
         data.texture_image = texture_image;
         data.texture_image_memory = texture_image_memory;
+        data.texture_image_format = texture_image_format;
+        data.texture_image_view =
+            create_texture_image_view(&device, data.texture_image, data.texture_image_format)?;
+        data.texture_sampler = create_texture_sampler(&device)?;
+
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
@@ -414,6 +426,9 @@ impl App {
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
 
+        self.device.destroy_sampler(self.data.texture_sampler, None);
+        self.device
+            .destroy_image_view(self.data.texture_image_view, None);
         self.device.destroy_image(self.data.texture_image, None);
         self.device
             .free_memory(self.data.texture_image_memory, None);

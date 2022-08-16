@@ -15,10 +15,49 @@ use super::{
     memory::get_memory_type_index,
 };
 
+/// Create a view into an image.
+///
+/// Remember to deallocate the image view before deallocating its image.
+pub unsafe fn create_image_view(
+    device: &Device,
+    image: vk::Image,
+    image_format: vk::Format,
+) -> Result<vk::ImageView> {
+    let subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_mip_level(0)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(1);
+
+    let info = vk::ImageViewCreateInfo::builder()
+        .image(image)
+        .view_type(vk::ImageViewType::TYPE_2D)
+        .format(image_format)
+        .subresource_range(*subresource_range);
+
+    Ok(device.create_image_view(&info, None)?)
+}
+
+/// Create a view into a texture image for use in a fragment shader.
+///
+/// Remember to deallocate the image view before deallocating its image.
+#[inline]
+#[tracing::instrument(level = "DEBUG", skip_all)]
+pub unsafe fn create_texture_image_view(
+    device: &Device,
+    image: vk::Image,
+    image_format: vk::Format,
+) -> Result<vk::ImageView> {
+    // Basically just a wrapper around create_image_view(), don't worry about it :P
+    create_image_view(device, image, image_format)
+}
+
 /// Load a PNG image as a texture.
 ///
 /// Returns a Vulkan handle to the created image object and a handle to the
-/// device memory used to allocate it.
+/// device memory used to allocate it, as well as the Vulkan format of the
+/// texture (for later reference).
 ///
 /// # Notes
 ///
@@ -39,7 +78,7 @@ pub unsafe fn create_texture_image<P>(
     device: &Device,
     data: &mut AppData,
     path: P,
-) -> Result<(vk::Image, vk::DeviceMemory)>
+) -> Result<(vk::Image, vk::DeviceMemory, vk::Format)>
 where
     P: AsRef<Path> + Debug,
 {
@@ -133,7 +172,7 @@ where
     device.destroy_buffer(staging_buffer, None);
     device.free_memory(staging_buffer_memory, None);
 
-    Ok((texture_image, texture_image_memory))
+    Ok((texture_image, texture_image_memory, vk_format))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -193,7 +232,7 @@ unsafe fn transition_image_layout(
     device: &Device,
     data: &AppData,
     image: vk::Image,
-    format: vk::Format,
+    _format: vk::Format,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
 ) -> Result<()> {
@@ -337,4 +376,26 @@ fn get_vulkan_image_format(color_type: png::ColorType, bit_depth: png::BitDepth)
 
         ColorType::Indexed => unreachable!(),
     }
+}
+
+/// Create a texture sampler for sampling texture images from fragment shaders.
+pub unsafe fn create_texture_sampler(device: &Device) -> Result<vk::Sampler> {
+    let info = vk::SamplerCreateInfo::builder()
+        .mag_filter(vk::Filter::LINEAR)
+        .min_filter(vk::Filter::LINEAR)
+        .address_mode_u(vk::SamplerAddressMode::REPEAT)
+        .address_mode_v(vk::SamplerAddressMode::REPEAT)
+        .address_mode_w(vk::SamplerAddressMode::REPEAT)
+        .anisotropy_enable(true)
+        .max_anisotropy(16.0)
+        .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+        .unnormalized_coordinates(false)
+        .compare_enable(false)
+        .compare_op(vk::CompareOp::ALWAYS)
+        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+        .mip_lod_bias(0.0)
+        .min_lod(0.0)
+        .max_lod(0.0);
+
+    Ok(device.create_sampler(&info, None)?)
 }
