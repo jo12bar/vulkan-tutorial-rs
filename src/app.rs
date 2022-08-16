@@ -1,4 +1,5 @@
 use crate::{
+    model::load_model,
     mvp_matrix::MvpMat,
     renderer::{
         buffers::{
@@ -19,6 +20,7 @@ use crate::{
         },
         validation::should_enable_validation_layers,
     },
+    vertex::Vertex,
     MAX_FRAMES_IN_FLIGHT,
 };
 
@@ -92,6 +94,8 @@ pub struct AppData {
 
     pub framebuffers: Vec<vk::Framebuffer>,
 
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
@@ -193,7 +197,7 @@ impl App {
             &instance,
             &device,
             &mut data,
-            "./resources/textures/statue.png",
+            "./resources/viking-room/viking-room.png",
         )?;
         data.texture_image = texture_image;
         data.texture_image_memory = texture_image_memory;
@@ -202,11 +206,14 @@ impl App {
             create_texture_image_view(&device, data.texture_image, data.texture_image_format)?;
         data.texture_sampler = create_texture_sampler(&device)?;
 
+        load_model(&mut data, "./resources/viking-room/viking-room.obj")?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
+
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
+
         create_command_buffers(&device, &mut data)?;
 
         create_sync_objects(&device, &mut data)?;

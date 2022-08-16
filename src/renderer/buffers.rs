@@ -5,10 +5,7 @@ use std::{mem::size_of, ptr};
 use ash::{vk, Device, Instance};
 use color_eyre::Result;
 
-use crate::{
-    app::AppData,
-    vertex::{Vertex, INDICES, VERTICES},
-};
+use crate::{app::AppData, vertex::Vertex};
 
 use super::{
     commands::{begin_transient_commands, end_transient_commands},
@@ -23,7 +20,7 @@ pub unsafe fn create_vertex_buffer(
     data: &mut AppData,
 ) -> Result<()> {
     // Create a vertex buffer for our static set of vertices (in lieu of proper model loading).
-    let size = (size_of::<Vertex>() * VERTICES.len()) as u64;
+    let size = (size_of::<Vertex>() * data.vertices.len()) as u64;
 
     // First copy the vertices to a host-visible staging buffer
     let (staging_buffer, staging_buffer_memory) = create_buffer(
@@ -39,7 +36,7 @@ pub unsafe fn create_vertex_buffer(
         // keep the memory map pointer inside this scope to avoid use-after-free
         let memory =
             device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
-        ptr::copy_nonoverlapping(VERTICES.as_ptr(), memory.cast(), VERTICES.len());
+        ptr::copy_nonoverlapping(data.vertices.as_ptr(), memory.cast(), data.vertices.len());
         device.unmap_memory(staging_buffer_memory);
     }
 
@@ -80,7 +77,7 @@ pub unsafe fn create_index_buffer(
     data: &mut AppData,
 ) -> Result<()> {
     // Create an index buffer for our static set of vertex indices (in lieu of proper model loading)
-    let size = (size_of::<u16>() * INDICES.len()) as u64;
+    let size = (size_of::<u32>() * data.indices.len()) as u64;
 
     // First copy the indices to a host-visible staging buffer
     let (staging_buffer, staging_buffer_memory) = create_buffer(
@@ -96,7 +93,7 @@ pub unsafe fn create_index_buffer(
         // keep the memory map pointer inside this scope to avoid use-after-free
         let memory =
             device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
-        ptr::copy_nonoverlapping(INDICES.as_ptr(), memory.cast(), INDICES.len());
+        ptr::copy_nonoverlapping(data.indices.as_ptr(), memory.cast(), data.indices.len());
         device.unmap_memory(staging_buffer_memory);
     }
 
