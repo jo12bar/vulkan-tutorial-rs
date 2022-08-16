@@ -1,3 +1,4 @@
+use crate::renderer::texture::create_texture_image;
 use crate::renderer::uniforms::{
     create_descriptor_pool, create_descriptor_sets, destroy_descriptor_pool,
 };
@@ -100,6 +101,9 @@ pub struct AppData {
     /// One descriptor set per swapchain image.
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 
+    pub texture_image: vk::Image,
+    pub texture_image_memory: vk::DeviceMemory,
+
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
     /// they're allocated from is destroyed. One per swapchain image.
@@ -167,8 +171,16 @@ impl App {
         debug!("Creating framebuffers");
         create_framebuffers(&device, &mut data)?;
 
-        debug!("Creating command, vertex, index, and uniform buffers");
+        debug!("Creating command, vertex, index, and uniform buffers, and loading textures");
         create_command_pool(&entry, &instance, &device, &mut data)?;
+        let (texture_image, texture_image_memory) = create_texture_image(
+            &instance,
+            &device,
+            &mut data,
+            "./resources/textures/statue.png",
+        )?;
+        data.texture_image = texture_image;
+        data.texture_image_memory = texture_image_memory;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
@@ -401,6 +413,11 @@ impl App {
     #[tracing::instrument(level = "DEBUG", name = "App::destroy", skip_all)]
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
+
+        self.device.destroy_image(self.data.texture_image, None);
+        self.device
+            .free_memory(self.data.texture_image_memory, None);
+
         self.device
             .destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
 

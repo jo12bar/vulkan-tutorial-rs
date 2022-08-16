@@ -101,3 +101,48 @@ pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData)
 
     Ok(())
 }
+
+/// Begin recording commands into a command buffer meant for immediate execution
+/// and deallocation.
+pub unsafe fn begin_transient_commands(
+    device: &Device,
+    data: &AppData,
+) -> Result<vk::CommandBuffer> {
+    // Allocate a temporary command buffer
+    let info = vk::CommandBufferAllocateInfo::builder()
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_pool(data.transient_command_pool)
+        .command_buffer_count(1);
+    let command_buffer = device.allocate_command_buffers(&info)?[0];
+
+    // Start recording commands
+    let info =
+        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    device.begin_command_buffer(command_buffer, &info)?;
+
+    Ok(command_buffer)
+}
+
+/// Stop recording a transient command buffer, submit it to the GPU for immediate
+/// execution, wait for the GPU to catch up, and then deallocate the command
+/// buffer.
+pub unsafe fn end_transient_commands(
+    device: &Device,
+    data: &AppData,
+    command_buffer: vk::CommandBuffer,
+) -> Result<()> {
+    // End recording commands
+    device.end_command_buffer(command_buffer)?;
+
+    // Immediately execute the commands, and wait for completion
+    let command_buffers = &[command_buffer];
+    let info = vk::SubmitInfo::builder().command_buffers(command_buffers);
+
+    device.queue_submit(data.graphics_queue, &[*info], vk::Fence::null())?;
+    device.queue_wait_idle(data.graphics_queue)?;
+
+    // Free the command buffer
+    device.free_command_buffers(data.transient_command_pool, command_buffers);
+
+    Ok(())
+}
