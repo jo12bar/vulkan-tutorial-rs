@@ -65,7 +65,13 @@ pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData)
                 float32: [0.0, 0.0, 0.0, 1.0],
             },
         };
-        let clear_values = &[color_clear_value];
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+        let clear_values = &[color_clear_value, depth_clear_value];
 
         // Begin drawing
         let info = vk::RenderPassBeginInfo::builder()

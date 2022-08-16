@@ -1,13 +1,19 @@
 //! Tools for setting up render pipelines.
 
 use crate::{app::AppData, vertex::Vertex};
-use ash::{vk, Device};
+use ash::{vk, Device, Instance};
 use color_eyre::{eyre::eyre, Result};
 use std::ffi::CStr;
 
+use super::depth_tests::get_depth_format;
+
 /// Create a render pass.
 #[tracing::instrument(level = "DEBUG", skip_all)]
-pub(crate) unsafe fn create_render_pass(device: &Device, data: &mut AppData) -> Result<()> {
+pub(crate) unsafe fn create_render_pass(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
     // Use a single color buffer attachment represented by one of the images
     // from the swapchain.
     let color_attachment = vk::AttachmentDescription::builder()
@@ -34,10 +40,27 @@ pub(crate) unsafe fn create_render_pass(device: &Device, data: &mut AppData) -> 
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
+    // Set up the depth and stencil attachments for depth testing
+    let depth_stencil_attachment = vk::AttachmentDescription::builder()
+        .format(get_depth_format(instance, data)?)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    // Depth buffer is available as the 1st output destination
+    let depth_stencil_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
     // We aren't doing any fancy post-processing, so a single subpass is all we need.
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(std::slice::from_ref(&color_attachment_ref));
+        .color_attachments(std::slice::from_ref(&color_attachment_ref))
+        .depth_stencil_attachment(&depth_stencil_attachment_ref);
 
     // Even though we only have a single subpass, we need to specify how to
     // transition into and out of it. So, we define subpass dependencies here.
@@ -47,15 +70,25 @@ pub(crate) unsafe fn create_render_pass(device: &Device, data: &mut AppData) -> 
         // target is our only defined subpass
         .dst_subpass(0)
         // wait for the swapchain to read from the image before accessing it
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
         .src_access_mask(vk::AccessFlags::empty())
         // operations that should wait on this dependency are in the color attachment
         // stage, and involve the writing of the color attachment
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+        // (and also the depth attachment)
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
 
     // Finalize the render pass.
-    let attachments = &[*color_attachment];
+    let attachments = &[*color_attachment, *depth_stencil_attachment];
     let subpasses = &[*subpass];
     let dependencies = &[*dependency];
     let info = vk::RenderPassCreateInfo::builder()
@@ -134,6 +167,16 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .sample_shading_enable(false)
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
+    // Setup depth testing
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS) // lower depth == closer
+        .depth_bounds_test_enable(false)
+        .min_depth_bounds(0.0) // ignored because bounds test disabled
+        .max_depth_bounds(1.0) // ignored because bounds test disabled
+        .stencil_test_enable(false); // disable stencil tests for now
+
     // Use alpha blending
     let attachment = vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -168,6 +211,7 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .viewport_state(&viewport_state)
         .rasterization_state(&rasterization_state)
         .multisample_state(&multisample_state)
+        .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blend_state)
         // Pipeline layout
         .layout(data.pipeline_layout)
@@ -210,7 +254,7 @@ pub(crate) unsafe fn create_framebuffers(device: &Device, data: &mut AppData) ->
         .swapchain_image_views
         .iter()
         .map(|i| {
-            let attachments = &[*i];
+            let attachments = &[*i, data.depth_image_view];
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
                 .attachments(attachments)

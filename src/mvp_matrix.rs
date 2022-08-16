@@ -58,7 +58,7 @@ impl MvpMat {
     /// Set the aspect ratio, vertical field-of-view, and far / near clip planes
     /// all at once.
     pub fn perspective(&mut self, aspect_ratio: f32, fovy: f32, near: f32, far: f32) -> &mut Self {
-        self.projection = glm::perspective(aspect_ratio, fovy, near, far);
+        self.projection = glm::perspective_rh_zo(aspect_ratio, fovy, near, far);
 
         // Vulkan's Y axis is flipped compared to OpenGL, which GLM was originally
         // designed for. Compensate for this by flipping the y-axis's scaling factor

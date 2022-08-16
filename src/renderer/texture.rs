@@ -22,9 +22,10 @@ pub unsafe fn create_image_view(
     device: &Device,
     image: vk::Image,
     image_format: vk::Format,
+    image_aspects: vk::ImageAspectFlags,
 ) -> Result<vk::ImageView> {
     let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .aspect_mask(image_aspects)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)
@@ -49,8 +50,7 @@ pub unsafe fn create_texture_image_view(
     image: vk::Image,
     image_format: vk::Format,
 ) -> Result<vk::ImageView> {
-    // Basically just a wrapper around create_image_view(), don't worry about it :P
-    create_image_view(device, image, image_format)
+    create_image_view(device, image, image_format, vk::ImageAspectFlags::COLOR)
 }
 
 /// Load a PNG image as a texture.
@@ -176,7 +176,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn create_image(
+pub unsafe fn create_image(
     instance: &Instance,
     device: &Device,
     data: &AppData,
@@ -228,16 +228,24 @@ unsafe fn create_image(
 ///
 /// Returns an error if an unimplemented combination of layout transitions is
 /// requested.
-unsafe fn transition_image_layout(
+pub unsafe fn transition_image_layout(
     device: &Device,
     data: &AppData,
     image: vk::Image,
-    _format: vk::Format,
+    format: vk::Format,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
 ) -> Result<()> {
     let (src_access_mask, dst_access_mask, src_stage_mask, dst_stage_mask) =
         match (old_layout, new_layout) {
+            (vk::ImageLayout::UNDEFINED, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => (
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            ),
+
             (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
                 vk::AccessFlags::empty(),
                 vk::AccessFlags::TRANSFER_WRITE,
@@ -255,8 +263,20 @@ unsafe fn transition_image_layout(
             _ => return Err(eyre!("Unsupported image layout transition")),
         };
 
+    let aspect_mask = if new_layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
+        match format {
+            vk::Format::D32_SFLOAT_S8_UINT | vk::Format::D24_UNORM_S8_UINT => {
+                vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+            }
+            vk::Format::D32_SFLOAT => vk::ImageAspectFlags::DEPTH,
+            _ => vk::ImageAspectFlags::COLOR,
+        }
+    } else {
+        vk::ImageAspectFlags::COLOR
+    };
+
     let subresource = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .aspect_mask(aspect_mask)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)

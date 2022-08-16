@@ -1,5 +1,6 @@
 pub mod buffers;
 pub mod commands;
+pub mod depth_tests;
 pub mod devices;
 pub mod extensions;
 pub mod instance;

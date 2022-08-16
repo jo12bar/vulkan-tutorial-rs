@@ -5,6 +5,7 @@ use crate::{
             create_index_buffer, create_vertex_buffer, destroy_index_buffer, destroy_vertex_buffer,
         },
         commands::{create_command_buffers, create_command_pool},
+        depth_tests::create_depth_objects,
         devices::{create_logical_device, pick_physical_device},
         extensions::Extensions,
         instance::create_instance,
@@ -103,6 +104,10 @@ pub struct AppData {
     /// One descriptor set per swapchain image.
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 
+    pub depth_image: vk::Image,
+    pub depth_image_memory: vk::DeviceMemory,
+    pub depth_image_view: vk::ImageView,
+
     pub texture_image: vk::Image,
     pub texture_image_memory: vk::DeviceMemory,
     pub texture_image_format: vk::Format,
@@ -169,16 +174,20 @@ impl App {
         create_swapchain_image_views(&device, &mut data)?;
 
         debug!("Creating render pipeline");
-        create_render_pass(&device, &mut data)?;
+        create_render_pass(&instance, &device, &mut data)?;
         create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
+
+        debug!("Creating command pools");
+        create_command_pool(&entry, &instance, &device, &mut data)?;
+
+        debug!("Creating depth-test objects");
+        create_depth_objects(&instance, &device, &mut data)?;
 
         debug!("Creating framebuffers");
         create_framebuffers(&device, &mut data)?;
 
         debug!("Creating command, vertex, index, and uniform buffers, and loading textures");
-
-        create_command_pool(&entry, &instance, &device, &mut data)?;
 
         let (texture_image, texture_image_memory, texture_image_format) = create_texture_image(
             &instance,
@@ -250,8 +259,9 @@ impl App {
             &mut self.data,
         )?;
         create_swapchain_image_views(&self.device, &mut self.data)?;
-        create_render_pass(&self.device, &mut self.data)?;
+        create_render_pass(&self.instance, &self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
+        create_depth_objects(&self.instance, &self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
@@ -464,6 +474,11 @@ impl App {
     /// Will destroy you in 1v1 Halo deathmatch
     #[tracing::instrument(level = "DEBUG", name = "App::destroy_swapchain", skip_all)]
     unsafe fn destroy_swapchain(&mut self) {
+        self.device
+            .destroy_image_view(self.data.depth_image_view, None);
+        self.device.free_memory(self.data.depth_image_memory, None);
+        self.device.destroy_image(self.data.depth_image, None);
+
         destroy_descriptor_pool(&self.device, &self.data);
         destroy_uniform_buffers(&self.device, &self.data);
 
