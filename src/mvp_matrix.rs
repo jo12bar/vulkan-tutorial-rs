@@ -5,14 +5,11 @@ use nalgebra_glm as glm;
 /// A model-view-projection matrix, to be used for implementing things like
 /// 3D cameras.
 ///
-/// This is intended to be sent to the GPU within a uniform buffer
-/// object, which is why it's `#[repr(C)]`.
-///
 /// Despite the name, this is actually 3 seperate 4x4 matrices wrapped up inside
 /// a struct.
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct MvpMat {
+    /// This should probably be sent as a push constant, _not_ in a uniform.
     pub model: glm::Mat4,
     pub view: glm::Mat4,
     pub projection: glm::Mat4,
@@ -67,10 +64,64 @@ impl MvpMat {
 
         self
     }
+
+    /// Copy view and projection into a struct ready for sending to the GPU
+    /// as a uniform buffer object.
+    pub const fn as_ubo(&self) -> MvpMatUBO {
+        MvpMatUBO {
+            view: self.view,
+            projection: self.projection,
+        }
+    }
+
+    /// Copy model matrix into a struct ready for sending to the GPU in a
+    /// push constant.
+    pub const fn as_push_constants(&self) -> MvpMatPushConstants {
+        MvpMatPushConstants { model: self.model }
+    }
 }
 
 impl Default for MvpMat {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// This is intended to be sent to the GPU within a uniform buffer
+/// object, which is why it's `#[repr(C)]`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct MvpMatUBO {
+    pub view: glm::Mat4,
+    pub projection: glm::Mat4,
+}
+
+/// This is intended to be sent to the GPU within a push constant,
+/// which is why it's `#[repr(C)]`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct MvpMatPushConstants {
+    pub model: glm::Mat4,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mvp_mat_push_constants_has_correct_size() {
+        assert_eq!(
+            std::mem::size_of::<MvpMatPushConstants>(),
+            64, // 16 × 4-byte floats
+            "Size of overall struct is wrong"
+        );
+
+        let mvp_mat = MvpMat::default();
+        let pcs = mvp_mat.as_push_constants();
+        assert_eq!(
+            std::mem::size_of_val(&pcs.model),
+            64, // 16 × 4-byte floats
+            "Size of model field is wrong"
+        );
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     model::load_model,
-    mvp_matrix::MvpMat,
+    mvp_matrix::{MvpMat, MvpMatUBO},
     renderer::{
         buffers::{
             create_index_buffer, create_vertex_buffer, destroy_index_buffer, destroy_vertex_buffer,
@@ -355,7 +355,7 @@ impl App {
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
-        self.update_uniform_buffers(image_index)?;
+        self.update_command_buffers(image_index)?;
 
         // Submit command buffers to the queue for rendering.
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
@@ -410,10 +410,10 @@ impl App {
         Ok(())
     }
 
-    /// Update all uniform buffers that need updating. Should be called right
+    /// Update all command buffers that need updating. Should be called right
     /// after we wait for the fence for the acquired swapchain image to be
     /// signalled in the render loop.
-    fn update_uniform_buffers(&mut self, image_index: u32) -> Result<()> {
+    fn update_command_buffers(&mut self, image_index: u32) -> Result<()> {
         // Figure out how much time has approximately passed since the last frame.
         let now = Instant::now();
         let delta_t = (now - self.last_frame_time).as_secs_f32();
@@ -439,15 +439,16 @@ impl App {
             );
 
         // Send model-view-projection matrix to the GPU
+        let ubo = self.mvp_mat.as_ubo();
         unsafe {
             // scope the memory-map pointer for safety
             let memory = self.device.map_memory(
                 self.data.uniform_buffers_memory[image_index as usize],
                 0,
-                size_of::<MvpMat>() as u64,
+                size_of::<MvpMatUBO>() as u64,
                 vk::MemoryMapFlags::empty(),
             )?;
-            ptr::copy_nonoverlapping(&self.mvp_mat, memory.cast(), 1);
+            ptr::copy_nonoverlapping(&ubo, memory.cast(), 1);
             self.device
                 .unmap_memory(self.data.uniform_buffers_memory[image_index as usize]);
         }

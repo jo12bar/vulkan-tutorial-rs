@@ -1,10 +1,13 @@
 #version 450
 
-layout(binding = 0) uniform MvpMat {
-    mat4 model;
+layout(binding = 0) uniform MvpMatUBO {
     mat4 view;
     mat4 projection;
 } mvpMat;
+
+layout(push_constant) uniform PushConstants {
+    mat4 model;
+} pcs;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
@@ -16,7 +19,7 @@ layout(location = 1) out vec2 fragTexCoord;
 void main() {
     gl_Position = mvpMat.projection
         * mvpMat.view
-        * mvpMat.model
+        * pcs.model
         * vec4(inPosition, 1.0);
     fragColor = inColor;
     fragTexCoord = inTexCoord;

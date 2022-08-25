@@ -1,6 +1,6 @@
 //! Tools for setting up render pipelines.
 
-use crate::{app::AppData, vertex::Vertex};
+use crate::{app::AppData, mvp_matrix::MvpMatPushConstants, vertex::Vertex};
 use ash::{vk, Device, Instance};
 use color_eyre::{eyre::eyre, Result};
 use std::ffi::CStr;
@@ -216,9 +216,22 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .attachments(std::slice::from_ref(&attachment))
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
+    // Tell the pipeline about our push constants
+    let vert_push_constant_range = vk::PushConstantRange::builder()
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .offset(0)
+        .size(std::mem::size_of::<MvpMatPushConstants>() as u32);
+
+    let frag_push_constant_range = vk::PushConstantRange::builder()
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        .offset(std::mem::size_of::<MvpMatPushConstants>() as u32)
+        .size(std::mem::size_of::<f32>() as u32); // for opacity as a 4-byte float
+
     // Setup the pipeline layout, including things like shader uniforms
+    let push_constant_ranges = &[*vert_push_constant_range, *frag_push_constant_range];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
-        .set_layouts(std::slice::from_ref(&data.descriptor_set_layout));
+        .set_layouts(std::slice::from_ref(&data.descriptor_set_layout))
+        .push_constant_ranges(push_constant_ranges);
 
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 

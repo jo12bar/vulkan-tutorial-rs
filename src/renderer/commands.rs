@@ -1,7 +1,10 @@
 //! Command buffer recording and allocating.
 
 use super::devices::QueueFamilyIndices;
-use crate::app::AppData;
+use crate::{
+    app::AppData,
+    mvp_matrix::{MvpMat, MvpMatPushConstants},
+};
 use ash::{vk, Device, Entry, Instance};
 use color_eyre::Result;
 
@@ -44,6 +47,13 @@ pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData)
         .command_buffer_count(data.framebuffers.len() as u32);
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+
+    let mvp_matrix = MvpMat::default();
+    let mvp_matrix_pcs = mvp_matrix.as_push_constants();
+    let model_mat = mvp_matrix_pcs.model;
+    let (_, model_mat_bytes, _) = model_mat.as_slice().align_to::<u8>();
+
+    let opacity = 0.25_f32;
 
     for (i, command_buffer) in data.command_buffers.iter().enumerate() {
         // Begin the command buffer with no inheritance from past command buffers,
@@ -92,6 +102,20 @@ pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData)
             0,
             &[data.descriptor_sets[i]],
             &[],
+        );
+        device.cmd_push_constants(
+            *command_buffer,
+            data.pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            model_mat_bytes,
+        );
+        device.cmd_push_constants(
+            *command_buffer,
+            data.pipeline_layout,
+            vk::ShaderStageFlags::FRAGMENT,
+            std::mem::size_of::<MvpMatPushConstants>() as u32,
+            &opacity.to_ne_bytes()[..],
         );
         device.cmd_draw_indexed(*command_buffer, data.indices.len() as u32, 1, 0, 0, 0); // three vertices hardcoded in vertex shader
 

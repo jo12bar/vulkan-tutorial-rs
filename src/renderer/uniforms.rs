@@ -5,7 +5,7 @@ use std::mem::size_of;
 use ash::{vk, Device, Instance};
 use color_eyre::Result;
 
-use crate::{app::AppData, mvp_matrix::MvpMat};
+use crate::{app::AppData, mvp_matrix::MvpMatUBO};
 
 use super::buffers::create_buffer;
 
@@ -59,7 +59,7 @@ pub unsafe fn create_uniform_buffers(
             instance,
             device,
             data,
-            size_of::<MvpMat>() as u64,
+            size_of::<MvpMatUBO>() as u64,
             vk::BufferUsageFlags::UNIFORM_BUFFER,
             vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
         )?;
@@ -135,7 +135,7 @@ pub unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Res
         let info = vk::DescriptorBufferInfo::builder()
             .buffer(data.uniform_buffers[i])
             .offset(0)
-            .range(size_of::<MvpMat>() as u64);
+            .range(size_of::<MvpMatUBO>() as u64);
 
         let mvp_mat_write = vk::WriteDescriptorSet::builder()
             .dst_set(data.descriptor_sets[i])
