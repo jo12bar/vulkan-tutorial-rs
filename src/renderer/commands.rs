@@ -4,7 +4,6 @@ use super::devices::QueueFamilyIndices;
 use crate::app::AppData;
 use ash::{vk, Device, Entry, Instance};
 use color_eyre::Result;
-use tracing::debug;
 
 /// Create a command pool, which manages the memory used to store command buffers.
 #[tracing::instrument(level = "DEBUG", skip_all)]
@@ -46,8 +45,6 @@ pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData)
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
 
-    // Begin recording the command buffer necessary for drawing a triangle.
-    debug!("Recording drawing commands for rendering a single triangle.");
     for (i, command_buffer) in data.command_buffers.iter().enumerate() {
         // Begin the command buffer with no inheritance from past command buffers,
         // and no flags.
