@@ -147,6 +147,7 @@ where
         img_info.width,
         img_info.height,
         mip_levels,
+        vk::SampleCountFlags::TYPE_1,
         vk_format,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::SAMPLED
@@ -203,6 +204,7 @@ pub unsafe fn create_image(
     width: u32,
     height: u32,
     mip_levels: u32,
+    samples: vk::SampleCountFlags,
     format: vk::Format,
     tiling: vk::ImageTiling,
     usage: vk::ImageUsageFlags,
@@ -222,7 +224,7 @@ pub unsafe fn create_image(
         .tiling(tiling)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .usage(usage)
-        .samples(vk::SampleCountFlags::TYPE_1)
+        .samples(samples)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
     let image = device.create_image(&info, None)?;

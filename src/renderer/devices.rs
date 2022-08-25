@@ -9,6 +9,7 @@ use super::{
 };
 use crate::{
     app::AppData,
+    renderer::multisampling::get_max_msaa_samples,
     util::{PhysicalDeviceName, VkExtensionName},
 };
 use ash::{extensions::khr as vk_khr, vk, Device, Entry, Instance};
@@ -60,9 +61,11 @@ pub(crate) unsafe fn pick_physical_device(
     let (physical_device, _, device_name, properties) = valid_devices.last().unwrap();
 
     data.physical_device = *physical_device;
+    data.msaa_samples = get_max_msaa_samples(instance, data);
     info!(
         device_name = %device_name,
         device_id = properties.device_id,
+        msaa_samples = ?data.msaa_samples,
         "Selected physical device for rendering"
     );
 

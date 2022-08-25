@@ -5,6 +5,7 @@ pub mod devices;
 pub mod extensions;
 pub mod instance;
 pub mod memory;
+pub mod multisampling;
 pub mod pipeline;
 pub mod swapchain;
 pub mod synchronization;

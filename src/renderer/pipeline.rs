@@ -19,7 +19,7 @@ pub(crate) unsafe fn create_render_pass(
     let color_attachment = vk::AttachmentDescription::builder()
         // Color attachment format MUST match swapchain image format!!
         .format(data.swapchain_format)
-        .samples(vk::SampleCountFlags::TYPE_1)
+        .samples(data.msaa_samples)
         // Clear out old values in the frame buffer when starting to render,
         // and make sure the new values are preserved once the render is done
         // (so you can see it on screen)
@@ -33,7 +33,7 @@ pub(crate) unsafe fn create_render_pass(
         .initial_layout(vk::ImageLayout::UNDEFINED)
         // We want the image to be ready for presentation via the swapchain
         // once we're done rendering.
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     // To fragment shaders, this will be the 0th output destination.
     let color_attachment_ref = vk::AttachmentReference::builder()
@@ -43,7 +43,7 @@ pub(crate) unsafe fn create_render_pass(
     // Set up the depth and stencil attachments for depth testing
     let depth_stencil_attachment = vk::AttachmentDescription::builder()
         .format(get_depth_format(instance, data)?)
-        .samples(vk::SampleCountFlags::TYPE_1)
+        .samples(data.msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -56,11 +56,29 @@ pub(crate) unsafe fn create_render_pass(
         .attachment(1)
         .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
+    // Set up a color resolve attachment so our normal multisampled color
+    // attachment can be resolved to a regular image.
+    let color_resolve_attachment = vk::AttachmentDescription::builder()
+        .format(data.swapchain_format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+
+    // The color resolve attachment is available as the 2nd output destination
+    let color_resolve_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(2)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
     // We aren't doing any fancy post-processing, so a single subpass is all we need.
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(std::slice::from_ref(&color_attachment_ref))
-        .depth_stencil_attachment(&depth_stencil_attachment_ref);
+        .depth_stencil_attachment(&depth_stencil_attachment_ref)
+        .resolve_attachments(std::slice::from_ref(&color_resolve_attachment_ref));
 
     // Even though we only have a single subpass, we need to specify how to
     // transition into and out of it. So, we define subpass dependencies here.
@@ -88,7 +106,11 @@ pub(crate) unsafe fn create_render_pass(
         );
 
     // Finalize the render pass.
-    let attachments = &[*color_attachment, *depth_stencil_attachment];
+    let attachments = &[
+        *color_attachment,
+        *depth_stencil_attachment,
+        *color_resolve_attachment,
+    ];
     let subpasses = &[*subpass];
     let dependencies = &[*dependency];
     let info = vk::RenderPassCreateInfo::builder()
@@ -162,10 +184,10 @@ pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Res
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
-    // For now, disable multisampling
+    // Enable multisampling
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        .rasterization_samples(data.msaa_samples);
 
     // Setup depth testing
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
@@ -254,7 +276,7 @@ pub(crate) unsafe fn create_framebuffers(device: &Device, data: &mut AppData) ->
         .swapchain_image_views
         .iter()
         .map(|i| {
-            let attachments = &[*i, data.depth_image_view];
+            let attachments = &[data.color_image_view, data.depth_image_view, *i];
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
                 .attachments(attachments)

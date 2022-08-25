@@ -10,6 +10,7 @@ use crate::{
         devices::{create_logical_device, pick_physical_device},
         extensions::Extensions,
         instance::create_instance,
+        multisampling::create_color_objects,
         pipeline::{create_framebuffers, create_pipeline, create_render_pass},
         swapchain::{create_swapchain, create_swapchain_image_views},
         synchronization::{create_sync_objects, destroy_sync_objects},
@@ -77,6 +78,7 @@ pub struct AppData {
     pub surface: vk::SurfaceKHR,
 
     pub physical_device: vk::PhysicalDevice,
+    pub msaa_samples: vk::SampleCountFlags,
 
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
@@ -107,6 +109,10 @@ pub struct AppData {
     pub descriptor_pool: vk::DescriptorPool,
     /// One descriptor set per swapchain image.
     pub descriptor_sets: Vec<vk::DescriptorSet>,
+
+    pub color_image: vk::Image,
+    pub color_image_memory: vk::DeviceMemory,
+    pub color_image_view: vk::ImageView,
 
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
@@ -197,6 +203,9 @@ impl App {
         debug!("Creating command pools");
         create_command_pool(&entry, &instance, &device, &mut data)?;
 
+        debug!("Creating multi-sampled color objects");
+        create_color_objects(&instance, &device, &mut data)?;
+
         debug!("Creating depth-test objects");
         create_depth_objects(&instance, &device, &mut data)?;
 
@@ -286,6 +295,7 @@ impl App {
         create_swapchain_image_views(&self.device, &mut self.data)?;
         create_render_pass(&self.instance, &self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
+        create_color_objects(&self.instance, &self.device, &mut self.data)?;
         create_depth_objects(&self.instance, &self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
@@ -499,6 +509,11 @@ impl App {
     /// Will destroy you in 1v1 Halo deathmatch
     #[tracing::instrument(level = "DEBUG", name = "App::destroy_swapchain", skip_all)]
     unsafe fn destroy_swapchain(&mut self) {
+        self.device
+            .destroy_image_view(self.data.color_image_view, None);
+        self.device.free_memory(self.data.color_image_memory, None);
+        self.device.destroy_image(self.data.color_image, None);
+
         self.device
             .destroy_image_view(self.data.depth_image_view, None);
         self.device.free_memory(self.data.depth_image_memory, None);
