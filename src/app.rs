@@ -118,6 +118,18 @@ pub struct AppData {
     pub texture_image_view: vk::ImageView,
     pub texture_sampler: vk::Sampler,
 
+    /// The count of mip-map levels for the model's textures.
+    ///
+    /// Calculate with something like:
+    ///
+    /// ```ignore
+    /// app_data.mip_levels = (img_width.max(img_height) as f32).log2().floor() as u32 + 1;
+    /// ```
+    ///
+    /// ...which calculates how many times the largest dimension can be divided by 2, while ensuring
+    /// that at least one mip level (the original image) is generated.
+    pub mip_levels: u32,
+
     pub command_pool: vk::CommandPool,
     /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
     /// they're allocated from is destroyed. One per swapchain image.
@@ -193,18 +205,24 @@ impl App {
 
         debug!("Creating command, vertex, index, and uniform buffers, and loading textures");
 
-        let (texture_image, texture_image_memory, texture_image_format) = create_texture_image(
-            &instance,
-            &device,
-            &mut data,
-            "./resources/viking-room/viking-room.png",
-        )?;
+        let (texture_image, texture_image_memory, texture_image_format, mip_levels) =
+            create_texture_image(
+                &instance,
+                &device,
+                &mut data,
+                "./resources/viking-room/viking-room.png",
+            )?;
         data.texture_image = texture_image;
         data.texture_image_memory = texture_image_memory;
         data.texture_image_format = texture_image_format;
-        data.texture_image_view =
-            create_texture_image_view(&device, data.texture_image, data.texture_image_format)?;
-        data.texture_sampler = create_texture_sampler(&device)?;
+        data.mip_levels = mip_levels;
+        data.texture_image_view = create_texture_image_view(
+            &device,
+            data.texture_image,
+            data.texture_image_format,
+            data.mip_levels,
+        )?;
+        data.texture_sampler = create_texture_sampler(&device, &data)?;
 
         load_model(&mut data, "./resources/viking-room/viking-room.obj")?;
         create_vertex_buffer(&instance, &device, &mut data)?;

@@ -107,6 +107,7 @@ pub(crate) unsafe fn create_swapchain_image_views(
                 *i,
                 data.swapchain_format,
                 vk::ImageAspectFlags::COLOR,
+                1,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;

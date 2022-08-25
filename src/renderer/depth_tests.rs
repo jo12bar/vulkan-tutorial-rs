@@ -25,6 +25,7 @@ pub unsafe fn create_depth_objects(
         data,
         data.swapchain_extent.width,
         data.swapchain_extent.height,
+        1,
         format,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -40,6 +41,7 @@ pub unsafe fn create_depth_objects(
         data.depth_image,
         format,
         vk::ImageAspectFlags::DEPTH,
+        1,
     )?;
 
     // Transition the depth image to the optimal layout
@@ -48,6 +50,7 @@ pub unsafe fn create_depth_objects(
         data,
         data.depth_image,
         format,
+        1,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     )?;
