@@ -5,45 +5,51 @@ use crate::app::AppData;
 use ash::{vk, Device, Entry, Instance};
 use color_eyre::Result;
 
-/// Create a command pool, which manages the memory used to store command buffers.
+/// Create command pools, which manage the memory used to store command buffers.
 #[tracing::instrument(level = "DEBUG", skip_all)]
-pub(crate) unsafe fn create_command_pool(
+pub(crate) unsafe fn create_command_pools(
     entry: &Entry,
     instance: &Instance,
     device: &Device,
     data: &mut AppData,
 ) -> Result<()> {
-    let qf_indices = QueueFamilyIndices::get(entry, instance, data, data.physical_device)?;
-
-    // Create a regular command pool for command buffers that might live a relatively long time.
-    let info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-        .queue_family_index(qf_indices.graphics);
-
-    data.command_pool = device.create_command_pool(&info, None)?;
-
     // Create a command pool specifically for "transient" command buffers,
     // which will be short-lived and will be reset or freed in a relatively
     // short timeframe. This can possibly enable memory allocation optimizations
     // by the implementation.
-    let info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-        .queue_family_index(qf_indices.graphics);
+    data.transient_command_pool = create_transient_command_pool(entry, instance, device, data)?;
 
-    data.transient_command_pool = device.create_command_pool(&info, None)?;
+    // Create one command pool per swapchain image for use during rendering.
+    let num_images = data.swapchain_images.len();
+    for _ in 0..num_images {
+        let command_pool = create_transient_command_pool(entry, instance, device, data)?;
+        data.command_pools.push(command_pool);
+    }
 
     Ok(())
 }
 
+/// Create a transient command pool for short-lived command buffers that can
+/// be submitted to graphics queues.
+unsafe fn create_transient_command_pool(
+    entry: &Entry,
+    instance: &Instance,
+    device: &Device,
+    data: &AppData,
+) -> Result<vk::CommandPool> {
+    let qf_indices = QueueFamilyIndices::get(entry, instance, data, data.physical_device)?;
+
+    let info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+        .queue_family_index(qf_indices.graphics);
+
+    Ok(device.create_command_pool(&info, None)?)
+}
+
 /// Create command buffers to use for rendering and such.
 #[tracing::instrument(level = "DEBUG", skip_all)]
-pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<()> {
-    let allocate_info = vk::CommandBufferAllocateInfo::builder()
-        .command_pool(data.command_pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(data.framebuffers.len() as u32);
-
-    data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+pub(crate) unsafe fn create_command_buffers(data: &mut AppData) -> Result<()> {
+    data.command_buffers = vec![vk::CommandBuffer::null(); data.framebuffers.len()];
 
     Ok(())
 }

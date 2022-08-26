@@ -5,7 +5,7 @@ use crate::{
         buffers::{
             create_index_buffer, create_vertex_buffer, destroy_index_buffer, destroy_vertex_buffer,
         },
-        commands::{create_command_buffers, create_command_pool},
+        commands::{create_command_buffers, create_command_pools},
         depth_tests::create_depth_objects,
         devices::{create_logical_device, pick_physical_device},
         extensions::Extensions,
@@ -139,10 +139,12 @@ pub struct AppData {
     /// that at least one mip level (the original image) is generated.
     pub mip_levels: u32,
 
-    pub command_pool: vk::CommandPool,
-    /// Note that command buffers are automatically destroyed when the [`vk::CommandPool`]
-    /// they're allocated from is destroyed. One per swapchain image.
+    /// This set of command pools should primarily be used for allocating buffers during rendering.
+    /// There is one command pool per swapchain image.
+    pub command_pools: Vec<vk::CommandPool>,
+    /// Note that command buffers are automatically deallocated when their parent command pool is destroyed.
     pub command_buffers: Vec<vk::CommandBuffer>,
+
     /// This command pool should only be used for very short-lived command buffers.
     /// That's why there's no place in this struct to store buffers allocated from
     /// it.
@@ -204,7 +206,7 @@ impl App {
         create_pipeline(&device, &mut data)?;
 
         debug!("Creating command pools");
-        create_command_pool(&entry, &instance, &device, &mut data)?;
+        create_command_pools(&entry, &instance, &device, &mut data)?;
 
         debug!("Creating multi-sampled color objects");
         create_color_objects(&instance, &device, &mut data)?;
@@ -244,7 +246,7 @@ impl App {
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
 
-        create_command_buffers(&device, &mut data)?;
+        create_command_buffers(&mut data)?;
 
         create_sync_objects(&device, &mut data)?;
 
@@ -305,7 +307,7 @@ impl App {
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
         create_descriptor_sets(&self.device, &mut self.data)?;
-        create_command_buffers(&self.device, &mut self.data)?;
+        create_command_buffers(&mut self.data)?;
         self.data
             .images_in_flight
             .resize(self.data.swapchain_images.len(), vk::Fence::null());
@@ -468,28 +470,28 @@ impl App {
 
     /// Update all command buffers that need updating.
     fn update_command_buffers(&mut self, image_index: u32, delta_t: f32) -> Result<()> {
-        // Reallocate the command buffer
-        let previous_command_buffer = self.data.command_buffers[image_index as usize];
-        if previous_command_buffer != vk::CommandBuffer::null() {
-            unsafe {
-                self.device
-                    .free_command_buffers(self.data.command_pool, &[previous_command_buffer]);
-            }
-        }
-
-        let allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(self.data.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-
-        let command_buffer = unsafe { self.device.allocate_command_buffers(&allocate_info)?[0] };
-        self.data.command_buffers[image_index as usize] = command_buffer;
-
-        // Reset the command buffer
+        // Reset the per-framebuffer command pool, resetting all command buffers allocated from it
+        let command_pool = self.data.command_pools[image_index as usize];
         unsafe {
             self.device
-                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
+                .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
         }
+
+        // Allocate a new command buffer from the resetted per-framebuffer command pool ONLY IF NEEDED
+        let command_buffer =
+            if self.data.command_buffers[image_index as usize] == vk::CommandBuffer::null() {
+                let allocate_info = vk::CommandBufferAllocateInfo::builder()
+                    .command_pool(command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+
+                let command_buffer =
+                    unsafe { self.device.allocate_command_buffers(&allocate_info)?[0] };
+                self.data.command_buffers[image_index as usize] = command_buffer;
+                command_buffer
+            } else {
+                self.data.command_buffers[image_index as usize]
+            };
 
         // Update model rotation
         self.mvp_mat
@@ -642,8 +644,10 @@ impl App {
         destroy_index_buffer(&self.device, &self.data);
         destroy_sync_objects(&self.device, &self.data);
 
-        self.device
-            .destroy_command_pool(self.data.command_pool, None);
+        self.data
+            .command_pools
+            .iter()
+            .for_each(|p| self.device.destroy_command_pool(*p, None));
         self.device
             .destroy_command_pool(self.data.transient_command_pool, None);
 
@@ -683,9 +687,6 @@ impl App {
             .framebuffers
             .iter()
             .for_each(|f| self.device.destroy_framebuffer(*f, None));
-
-        self.device
-            .free_command_buffers(self.data.command_pool, &self.data.command_buffers);
 
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device
