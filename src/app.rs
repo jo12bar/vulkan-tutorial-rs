@@ -70,6 +70,9 @@ pub struct App {
     /// especially when we make the CPU wait for the GPU to render
     /// MAX_FRAMES_IN_FLIGHT frames with memory fences.
     last_frame_time: Instant,
+
+    /// The instant in time the app was started at.
+    app_start_time: Instant,
 }
 
 /// Vulkan handles and associated properties used by our Vulkan [`App`].
@@ -260,6 +263,7 @@ impl App {
             resized: false,
             mvp_mat: MvpMat::default(),
             last_frame_time: Instant::now(),
+            app_start_time: Instant::now(),
         })
     }
 
@@ -355,7 +359,9 @@ impl App {
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
-        self.update_command_buffers(image_index)?;
+        let delta_t = self.tick_frame_clock();
+        self.update_command_buffers(image_index, delta_t)?;
+        self.update_uniform_buffers(image_index, delta_t)?;
 
         // Submit command buffers to the queue for rendering.
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
@@ -410,19 +416,23 @@ impl App {
         Ok(())
     }
 
-    /// Update all command buffers that need updating. Should be called right
-    /// after we wait for the fence for the acquired swapchain image to be
-    /// signalled in the render loop.
-    fn update_command_buffers(&mut self, image_index: u32) -> Result<()> {
+    /// Increment the frame clock. Returns the delta time since the last frame
+    /// in seconds.
+    fn tick_frame_clock(&mut self) -> f32 {
         // Figure out how much time has approximately passed since the last frame.
         let now = Instant::now();
         let delta_t = (now - self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
 
+        delta_t
+    }
+
+    /// Update all uniform buffers that need updating. Should be called right
+    /// after we wait for the fence for the acquired swapchain image to be
+    /// signalled in the render loop.
+    fn update_uniform_buffers(&mut self, image_index: u32, _delta_t: f32) -> Result<()> {
         // Update model-view-projection matrix
         self.mvp_mat
-            // Rotate the model 90 degrees per second about its z axis
-            .model_rotate_z(delta_t * glm::radians(&glm::vec1(90.0))[0])
             // Look at model from above at an angle
             .look_at(
                 &glm::vec3(2.0, 2.0, 2.0),
@@ -451,6 +461,137 @@ impl App {
             ptr::copy_nonoverlapping(&ubo, memory.cast(), 1);
             self.device
                 .unmap_memory(self.data.uniform_buffers_memory[image_index as usize]);
+        }
+
+        Ok(())
+    }
+
+    /// Update all command buffers that need updating.
+    fn update_command_buffers(&mut self, image_index: u32, delta_t: f32) -> Result<()> {
+        let command_buffer = self.data.command_buffers[image_index as usize];
+
+        // Reset the command buffer
+        unsafe {
+            self.device
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
+        }
+
+        // Update model rotation
+        self.mvp_mat
+            .model_rotate_z(delta_t * glm::radians(&glm::vec1(90.0))[0]);
+
+        let mvp_mat_pcs = self.mvp_mat.as_push_constants();
+        let (_, mvp_mat_pcs_model_bytes, _) =
+            unsafe { mvp_mat_pcs.model.as_slice().align_to::<u8>() };
+
+        // Update model opacity
+        let opacity: f32 = 0.75
+            + 0.25
+                * (2.0 * std::f32::consts::PI * 1.0 * self.app_start_time.elapsed().as_secs_f32())
+                    .sin();
+
+        // Record the command buffer for this particular frame.
+
+        // Begin the command buffer with no inheritance from past command buffers,
+        // and no flags.
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        unsafe {
+            self.device.begin_command_buffer(command_buffer, &info)?;
+        }
+
+        // Render to the entire available image
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(self.data.swapchain_extent);
+
+        // Clear to opaque black
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+        let clear_values = &[color_clear_value, depth_clear_value];
+
+        // Begin drawing to the current framebuffer
+        unsafe {
+            let info = vk::RenderPassBeginInfo::builder()
+                .render_pass(self.data.render_pass)
+                .framebuffer(self.data.framebuffers[image_index as usize])
+                .render_area(*render_area)
+                .clear_values(clear_values);
+            self.device
+                .cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+
+            self.device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.data.pipeline,
+            );
+
+            self.device.cmd_bind_vertex_buffers(
+                command_buffer,
+                0,
+                &[self.data.vertex_buffer],
+                &[0],
+            );
+            self.device.cmd_bind_index_buffer(
+                command_buffer,
+                self.data.index_buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+
+            self.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.data.pipeline_layout,
+                0,
+                &[self.data.descriptor_sets[image_index as usize]],
+                &[],
+            );
+
+            // Model push constant
+            self.device.cmd_push_constants(
+                command_buffer,
+                self.data.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                mvp_mat_pcs_model_bytes,
+            );
+
+            // Opacity push constant
+            self.device.cmd_push_constants(
+                command_buffer,
+                self.data.pipeline_layout,
+                vk::ShaderStageFlags::FRAGMENT,
+                std::mem::size_of_val(&mvp_mat_pcs.model) as u32,
+                &opacity.to_ne_bytes()[..],
+            );
+
+            // Draw
+            self.device.cmd_draw_indexed(
+                command_buffer,
+                self.data.indices.len() as u32,
+                1,
+                0,
+                0,
+                0,
+            );
+
+            // End drawing
+            self.device.cmd_end_render_pass(command_buffer);
+        }
+
+        // End recording the command buffer
+        unsafe {
+            self.device.end_command_buffer(command_buffer)?;
         }
 
         Ok(())
