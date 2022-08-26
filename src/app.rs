@@ -468,7 +468,22 @@ impl App {
 
     /// Update all command buffers that need updating.
     fn update_command_buffers(&mut self, image_index: u32, delta_t: f32) -> Result<()> {
-        let command_buffer = self.data.command_buffers[image_index as usize];
+        // Reallocate the command buffer
+        let previous_command_buffer = self.data.command_buffers[image_index as usize];
+        if previous_command_buffer != vk::CommandBuffer::null() {
+            unsafe {
+                self.device
+                    .free_command_buffers(self.data.command_pool, &[previous_command_buffer]);
+            }
+        }
+
+        let allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(self.data.command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let command_buffer = unsafe { self.device.allocate_command_buffers(&allocate_info)?[0] };
+        self.data.command_buffers[image_index as usize] = command_buffer;
 
         // Reset the command buffer
         unsafe {
