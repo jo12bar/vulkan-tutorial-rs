@@ -10,9 +10,12 @@ use nalgebra_glm as glm;
 #[derive(Clone, Copy, Debug)]
 pub struct MvpMat {
     /// This should probably be sent as a push constant, _not_ in a uniform.
-    pub model: glm::Mat4,
+    model: glm::Mat4,
     pub view: glm::Mat4,
     pub projection: glm::Mat4,
+
+    /// The position of this model in 3D space, relative to the origin.
+    pub model_position: glm::Vec3,
 }
 
 impl MvpMat {
@@ -25,6 +28,7 @@ impl MvpMat {
                 &glm::vec3(0.0, 0.0, 1.0),
             ),
             projection: glm::perspective(16.0 / 9.0, glm::radians(&glm::vec1(45.0))[0], 0.1, 10.0),
+            model_position: glm::vec3(0.0, 0.0, 0.0),
         };
 
         // Vulkan's Y axis is flipped compared to OpenGL, which GLM was originally
@@ -41,13 +45,15 @@ impl MvpMat {
         self
     }
 
+    /// Set the model's position in 3D space.
+    pub fn model_set_position(&mut self, position: &glm::Vec3) -> &mut Self {
+        self.model_position = *position;
+
+        self
+    }
+
     /// Position and orientate the camera.
-    pub fn look_at(
-        &mut self,
-        eye: &glm::TVec3<f32>,
-        center: &glm::TVec3<f32>,
-        up: &glm::TVec3<f32>,
-    ) -> &mut Self {
+    pub fn look_at(&mut self, eye: &glm::Vec3, center: &glm::Vec3, up: &glm::Vec3) -> &mut Self {
         self.view = glm::look_at(eye, center, up);
         self
     }
@@ -76,8 +82,10 @@ impl MvpMat {
 
     /// Copy model matrix into a struct ready for sending to the GPU in a
     /// push constant.
-    pub const fn as_push_constants(&self) -> MvpMatPushConstants {
-        MvpMatPushConstants { model: self.model }
+    pub fn as_push_constants(&self) -> MvpMatPushConstants {
+        MvpMatPushConstants {
+            model: glm::translate(&glm::identity(), &self.model_position) * self.model,
+        }
     }
 }
 

@@ -62,6 +62,8 @@ pub struct App {
     /// Global model-view-projection matrix.
     mvp_mat: MvpMat,
 
+    pub num_models: usize,
+
     /// The time that the last frame was rendered at. Used for keeping basic
     /// animations temporally accurate, regardless of framerate.
     ///
@@ -70,9 +72,8 @@ pub struct App {
     /// especially when we make the CPU wait for the GPU to render
     /// MAX_FRAMES_IN_FLIGHT frames with memory fences.
     last_frame_time: Instant,
-
-    /// The instant in time the app was started at.
-    app_start_time: Instant,
+    // /// The instant in time the app was started at.
+    // app_start_time: Instant,
 }
 
 /// Vulkan handles and associated properties used by our Vulkan [`App`].
@@ -264,8 +265,9 @@ impl App {
             frame: 0,
             resized: false,
             mvp_mat: MvpMat::default(),
+            num_models: 1,
             last_frame_time: Instant::now(),
-            app_start_time: Instant::now(),
+            // app_start_time: Instant::now(),
         })
     }
 
@@ -435,9 +437,9 @@ impl App {
     fn update_uniform_buffers(&mut self, image_index: u32, _delta_t: f32) -> Result<()> {
         // Update model-view-projection matrix
         self.mvp_mat
-            // Look at model from above at an angle
+            // Look at model from a distance
             .look_at(
-                &glm::vec3(2.0, 2.0, 2.0),
+                &glm::vec3(6.0, 0.0, 2.0),
                 &glm::vec3(0.0, 0.0, 0.0),
                 &glm::vec3(0.0, 0.0, 1.0),
             )
@@ -497,16 +499,6 @@ impl App {
         self.mvp_mat
             .model_rotate_z(delta_t * glm::radians(&glm::vec1(90.0))[0]);
 
-        let mvp_mat_pcs = self.mvp_mat.as_push_constants();
-        let (_, mvp_mat_pcs_model_bytes, _) =
-            unsafe { mvp_mat_pcs.model.as_slice().align_to::<u8>() };
-
-        // Update model opacity
-        let opacity: f32 = 0.75
-            + 0.25
-                * (2.0 * std::f32::consts::PI * 1.0 * self.app_start_time.elapsed().as_secs_f32())
-                    .sin();
-
         // Record the command buffer for this particular frame.
 
         // Begin the command buffer with no inheritance from past command buffers,
@@ -536,16 +528,87 @@ impl App {
         };
         let clear_values = &[color_clear_value, depth_clear_value];
 
-        // Begin drawing to the current framebuffer
         unsafe {
+            // Begin render pass in the current framebuffer. All rendering
+            // commands are performed in secondary command buffers.
             let info = vk::RenderPassBeginInfo::builder()
                 .render_pass(self.data.render_pass)
                 .framebuffer(self.data.framebuffers[image_index as usize])
                 .render_area(*render_area)
                 .clear_values(clear_values);
-            self.device
-                .cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+            self.device.cmd_begin_render_pass(
+                command_buffer,
+                &info,
+                vk::SubpassContents::SECONDARY_COMMAND_BUFFERS,
+            );
 
+            // Draw model using a secondary command buffer
+            let secondary_command_buffers = (0..self.num_models)
+                .map(|i| self.update_secondary_command_buffer(image_index, i))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.device
+                .cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
+
+            // End render pass
+            self.device.cmd_end_render_pass(command_buffer);
+        }
+
+        // End recording the command buffer
+        unsafe {
+            self.device.end_command_buffer(command_buffer)?;
+        }
+
+        Ok(())
+    }
+
+    /// Record and update a secondary command buffer.
+    fn update_secondary_command_buffer(
+        &mut self,
+        image_index: u32,
+        model_index: usize,
+    ) -> Result<vk::CommandBuffer> {
+        let image_index = image_index as usize;
+
+        // Allocate the buffer
+        let allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(self.data.command_pools[image_index])
+            .level(vk::CommandBufferLevel::SECONDARY)
+            .command_buffer_count(1);
+
+        let command_buffer = unsafe { self.device.allocate_command_buffers(&allocate_info)?[0] };
+
+        // Set model position based on which index model this is
+        let y = (((model_index % 2) as f32) * 2.5) - 1.25;
+        let z = (((model_index / 2) as f32) * -2.0) + 1.0;
+
+        self.mvp_mat.model_set_position(&glm::vec3(0.0, y, z));
+
+        let mvp_mat_pcs = self.mvp_mat.as_push_constants();
+        let (_, mvp_mat_pcs_model_bytes, _) =
+            unsafe { mvp_mat_pcs.model.as_slice().align_to::<u8>() };
+
+        // Update model opacity
+        let opacity: f32 = (model_index + 1) as f32 * 0.25;
+        let opacity_bytes = &opacity.to_ne_bytes()[..];
+
+        // Specify which render pass, subpass, and framebuffer the secondary
+        // command buffer will be used with
+        let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
+            .render_pass(self.data.render_pass)
+            .subpass(0)
+            .framebuffer(self.data.framebuffers[image_index]);
+
+        // Begin recording command buffer
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE) // cmd buf will be executed entirely inside render pass
+            .inheritance_info(&inheritance_info);
+
+        unsafe {
+            self.device.begin_command_buffer(command_buffer, &info)?;
+        }
+
+        // Draw the model
+        unsafe {
             self.device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -589,7 +652,7 @@ impl App {
                 self.data.pipeline_layout,
                 vk::ShaderStageFlags::FRAGMENT,
                 std::mem::size_of_val(&mvp_mat_pcs.model) as u32,
-                &opacity.to_ne_bytes()[..],
+                opacity_bytes,
             );
 
             // Draw
@@ -601,17 +664,14 @@ impl App {
                 0,
                 0,
             );
-
-            // End drawing
-            self.device.cmd_end_render_pass(command_buffer);
         }
 
-        // End recording the command buffer
+        // End recording command buffer
         unsafe {
             self.device.end_command_buffer(command_buffer)?;
         }
 
-        Ok(())
+        Ok(command_buffer)
     }
 
     /// Wait for the app's GPU to stop processing. Use this before destroying

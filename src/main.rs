@@ -3,7 +3,7 @@ use tracing::{debug, info, warn};
 use vk_tut::app::App;
 use winit::{
     dpi::LogicalSize,
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
@@ -40,6 +40,21 @@ fn main() -> Result<()> {
                 } else {
                     is_minimized = false;
                     app.trigger_resize();
+                }
+            }
+
+            // Handle key presses
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput { input, .. },
+                ..
+            } => {
+                // When left/right pressed, incr/decr number of models displayed
+                if input.state == ElementState::Pressed {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::Left) if app.num_models > 1 => app.num_models -= 1,
+                        Some(VirtualKeyCode::Right) if app.num_models < 4 => app.num_models += 1,
+                        _ => {}
+                    }
                 }
             }
 
